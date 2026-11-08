@@ -183,7 +183,7 @@ export function summarize(receipts: Receipt[]) {
   };
 }
 
-export function Reports({ op, emergency }: { op: Operation; emergency: boolean }) {
+export function Reports({ op }: { op: Operation }) {
   const [from, setFrom] = useState(localDay());
   const [to, setTo] = useState(localDay());
   const [error, setError] = useState("");
@@ -193,7 +193,7 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
   });
   const stats = summarize(periodReceipts);
   const labelFor = (method: string) => op.catalog?.methods.find((m) => m.code === method)?.label ?? method;
-  const exportName = emergency ? "cierre-de-emergencia" : "reporte-de-ventas";
+  const exportName = "reporte-de-ventas";
   const dates = [...stats.byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
   const max = Math.max(1, ...dates.map(([, value]) => value.toNumber()));
   const low = (op.catalog?.products ?? []).filter((p) => p.active && p.stock <= p.min_stock).sort((a, b) => a.stock - b.stock);
@@ -221,7 +221,7 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
       ["Anuladas (excluidas de los totales)", periodReceipts.length - stats.rows.length],
     ] as const;
     const pdf = createReportPdf({
-      title: emergency ? "Cierre de emergencia" : "Reporte de ventas",
+      title: "Reporte de ventas",
       pharmacy: pharmacyDisplayName(settings?.pharmacy_name),
       logo: new Uint8Array(await logo.arrayBuffer()),
       rif: pharmacyBrand.rif,
@@ -261,7 +261,7 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
   }
 
   return <>
-    <Heading label="ANÁLISIS" title={emergency ? "Cierre de emergencia" : "Reportes"}>{emergency ? "Reúne las ventas del apagón y separa lo cobrado por moneda." : "Revisa ventas por período, productos y actividad por cajero."}</Heading>
+    <Heading label="ANÁLISIS" title="Reportes">Revisa ventas por período, productos y actividad por cajero.</Heading>
     {error && <Notice>{error}</Notice>}
     {op.connection === "offline" && <Notice>El reporte usa las operaciones disponibles en este dispositivo y en la sesión.</Notice>}
     <LoadHistory op={op} />
@@ -293,12 +293,12 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
       </section>
       <section className="card stack"><h2>Productos vendidos</h2>{stats.products.length ? stats.products.map((p, i) => <div className="list-line" key={p.name + i}><span>{p.name}</span><strong>{p.quantity}</strong></div>) : <Empty>Sin ventas en el período.</Empty>}</section>
     </div>
-    {!emergency && <div className="split">
+    <div className="split">
       <section className="card stack"><h2>Ventas por día</h2>{dates.length ? dates.map(([day, total]) =>
         <div className="chart-row" key={day}><span>{day}</span><div className="chart-track"><span style={{ width: 100 * total.toNumber() / max + "%" }} /></div><b>{money(total.toFixed(2))}</b></div>) : <Empty>Sin ventas en el período.</Empty>}</section>
       <section className="card stack"><h2>Ventas por cajero</h2>{stats.byCashier.size ? [...stats.byCashier.entries()].map(([name, totals]) => <div className="list-line" key={name}><span>{name} · {totals.count} ventas</span><strong>{money(totals.total.toFixed(2))}</strong></div>) : <Empty>Sin ventas en el período.</Empty>}</section>
       <section className="card stack"><h2>Menor existencia</h2>{low.length ? low.slice(0, 20).map((p) => <div className="list-line" key={p.id}><span>{p.name}</span><strong>{p.stock}</strong></div>) : <Empty>Sin productos bajo el mínimo.</Empty>}</section>
-    </div>}
+    </div>
   </>;
 }
 

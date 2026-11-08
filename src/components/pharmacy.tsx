@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { pharmacyBrand } from "@/lib/brand";
 import { motion, useReducedMotion } from "framer-motion";
-import { Activity, ArrowDownToLine, ArrowRight, BarChart3, BatteryCharging, CalendarClock, ClipboardCheck, Clock3, CloudOff, HeartPulse, History, LayoutGrid, LockKeyhole, Menu, Package, RefreshCw, Settings2, ShieldCheck, ShoppingCart, Users, Wifi, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, BarChart3, ClipboardCheck, Clock3, CloudOff, HeartPulse, History, LayoutGrid, LockKeyhole, Menu, Package, RefreshCw, Settings2, ShieldCheck, ShoppingCart, Users, Wifi, X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { displayDate, localDay, money, type Receipt } from "@/lib/domain";
 import { accessError, useOperation, type Operation } from "@/lib/use-operation";
@@ -11,7 +11,7 @@ import { Sales } from "./sales";
 import { ReceiptView, Records, Reports, summarize } from "./records";
 import { Customers, Settings } from "./admin";
 import { Button } from "./ui/button";
-import { Brand, Empty, Field, Heading, Notice } from "./ui/shared";
+import { Brand, Field, Heading, Notice } from "./ui/shared";
 
 const nav = [
   { id: "dashboard", label: "Resumen", icon: LayoutGrid, admin: false },
@@ -20,7 +20,6 @@ const nav = [
   { id: "history", label: "Historial de ventas", icon: History, admin: false },
   { id: "customers", label: "Clientes", icon: Users, admin: false },
   { id: "fiscal", label: "Pendientes fiscales", icon: ClipboardCheck, admin: true },
-  { id: "emergency", label: "Cierre de emergencia", icon: BatteryCharging, admin: false },
   { id: "reports", label: "Reportes", icon: BarChart3, admin: true },
   { id: "settings", label: "Configuración", icon: Settings2, admin: true },
 ] as const;
@@ -99,8 +98,7 @@ export function Pharmacy() {
           {current === "history" && <Records op={op} onReceipt={setReceipt} />}
           {current === "customers" && <Customers op={op} />}
           {current === "fiscal" && <Records op={op} fiscal onReceipt={setReceipt} />}
-          {current === "emergency" && <Reports op={op} emergency />}
-          {current === "reports" && <Reports op={op} emergency={false} />}
+          {current === "reports" && <Reports op={op} />}
           {current === "settings" && <Settings op={op} />}
         </motion.div>
       </main>
@@ -197,7 +195,6 @@ function Dashboard({ op, open }: { op: Operation; open: (page: View) => void }) 
   const all = summarize(op.receipts);
   const products = op.catalog?.products ?? [];
   const low = products.filter((p) => p.active && p.stock <= p.min_stock);
-  const expiry = products.filter((p) => p.active && p.expiration && p.expiration <= localDay(Date.now() + 30 * 86400000));
   const transferred = all.rows.filter((r) => r.fiscal_status === "transferred").length;
   const admin = op.profile?.role === "admin";
   const tiles = [
@@ -226,13 +223,9 @@ function Dashboard({ op, open }: { op: Operation; open: (page: View) => void }) 
         <div className="list-line"><span>Última sincronización exitosa</span><strong>{op.local?.lastSync ? displayDate(op.local.lastSync) : "—"}</strong></div>
         {admin && <div><Button variant="ghost" onClick={() => open("fiscal")}>Ver pendientes fiscales <ArrowRight size={16} /></Button></div>}
       </section>
-      <section className="card stack"><div className="section-title"><div><h2>Vencimientos</h2><p>Vencidos o dentro de los próximos 30 días</p></div><CalendarClock size={21} /></div>
-        {expiry.length ? expiry.slice(0, 8).map((p) => <div className="list-line" key={p.id}><span>{p.name}</span><strong>{p.expiration}</strong></div>) : <Empty>Sin alertas de vencimiento.</Empty>}
-      </section>
       <section className="card stack"><div className="section-title"><div><h2>Operación durante apagones</h2><p>Estado de la preparación del dispositivo</p></div><Clock3 size={21} /></div>
         <div className="list-line"><span>Autorización local</span><strong>{op.local ? displayDate(op.local.grant.expires_at) : "Por preparar"}</strong></div>
         <div className="list-line"><span>Apertura sin conexión</span><strong>{op.workerReady ? "Caché lista" : "Por verificar"}</strong></div>
-        <div><Button variant="ghost" onClick={() => open("emergency")}>Abrir cierre de emergencia <ArrowRight size={16} /></Button></div>
       </section>
     </div>
   </>;

@@ -33,7 +33,7 @@ El alta y la recuperación de credenciales se gestionan desde Supabase. En la ap
 - Al volver la red, una sesión autenticada sincroniza en segundo plano mientras la app esté abierta. Si ingresaste con la clave local después de cerrar el navegador, elige **Reconectar** e introduce tu contraseña de usuario. Revisa los errores que se muestran en pantalla.
 - Conserva la aplicación instalada y los datos del navegador mientras haya operaciones pendientes. Borrar datos, perder el dispositivo o usar una sesión privada puede impedir recuperar las ventas locales. El administrador debe conciliar cualquier operación pendiente de una cuenta antes de desactivarla.
 - Dos dispositivos pueden vender el último producto mientras están desconectados. Al sincronizar, ambas operaciones se conservan y se muestra el saldo negativo para conciliación. El administrador registra el ajuste con un motivo. El acceso offline usa la autorización previamente concedida hasta su vencimiento y el servidor comprueba nuevamente el perfil al sincronizar.
-- En **Pendientes fiscales**, registra la fecha y la referencia del documento del sistema fiscal una vez emitido. En **Cierre de emergencia**, selecciona el período del apagón y descarga el resumen. Los informes muestran cobros netos por moneda, con el total de venta en USD de referencia.
+- En **Pendientes fiscales**, registra la fecha y la referencia del documento del sistema fiscal una vez emitido. En **Reportes**, selecciona el período del apagón y descarga el resumen. Los informes muestran cobros netos por moneda, con el total de venta en USD de referencia.
 - Para impresión térmica, selecciona 58 mm u 80 mm en el comprobante y configura el ancho de papel en el diálogo de tu impresora.
 
 ## Importación de inventario
