@@ -54,7 +54,20 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   await expect(page.getByRole("heading", { name: "Resumen de la farmacia" })).toBeVisible();
   await page.getByRole("button", { name: "Abrir punto de venta" }).click();
   await page.getByRole("button", { name: "Añadir Acetaminofén" }).click();
-  await page.getByRole("button", { name: "Exacto en USD" }).click();
+  await page.getByLabel("Moneda", { exact: true }).selectOption("VES");
+  await page.getByLabel("Método", { exact: true }).selectOption("mobile");
+  await expect(page.getByText("Total a cobrar", { exact: true }).locator("..")).toContainText("Bs. 1.250,00");
+  await expect(page.getByText("Pendiente por cobrar", { exact: true }).locator("..")).toContainText("Bs. 1.250,00");
+  await page.getByRole("button", { name: "Usar monto exacto · Bs. 1.250,00" }).click();
+  await expect(page.getByLabel("Recibido")).toHaveValue("1250.00");
+  await page.getByLabel("Moneda", { exact: true }).selectOption("COP");
+  await expect(page.getByLabel("Recibido")).toHaveValue("");
+  await expect(page.getByText("Total a cobrar", { exact: true }).locator("..")).toContainText("20.000");
+  await page.getByLabel("Moneda", { exact: true }).selectOption("VES");
+  await page.getByLabel("Recibido").fill("750");
+  await page.getByRole("button", { name: "Añadir pago" }).click();
+  await page.getByRole("button", { name: /Usar monto exacto.*USD.*2,00/ }).click();
+  await expect(page.getByLabel("Recibido").nth(1)).toHaveValue("2.00");
   const confirmSale = page.getByRole("button", { name: "Confirmar venta" });
   await expect(confirmSale).toBeDisabled();
   await expect(page.getByText("Prepara este dispositivo con internet para confirmar la venta.")).toBeVisible();
@@ -95,5 +108,9 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   await expect(reopened.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
   expect(sendCount).toBe(1);
   expect(accepted.size).toBe(1);
+  expect([...accepted.values()][0].payments).toEqual([
+    { currency: "VES", method: "mobile", amount: "750", change_amount: "0" },
+    { currency: "USD", method: "cash", amount: "2.00", change_amount: "0" },
+  ]);
   expect(errors).toEqual([]);
 });

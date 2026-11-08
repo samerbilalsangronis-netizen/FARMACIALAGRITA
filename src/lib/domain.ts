@@ -43,8 +43,17 @@ export const localDay = (value: string | number | Date = new Date()) => new Intl
   timeZone: "America/Caracas", year: "numeric", month: "2-digit", day: "2-digit",
 }).format(new Date(value));
 
+function exchangeRate(currency: Currency, rate: Rate | null) {
+  return currency === "USD" ? 1 : currency === "VES" ? rate?.ves : rate?.cop;
+}
+
+export function amountInCurrency(usd: string, currency: Currency, rate: Rate | null) {
+  const exchange = exchangeRate(currency, rate);
+  return exchange ? new decimal(usd).times(exchange).toFixed(currencyScale(currency)) : null;
+}
+
 export function paymentValue(payment: Payment, rate: Rate | null) {
-  const exchange = payment.currency === "USD" ? 1 : payment.currency === "VES" ? rate?.ves : rate?.cop;
+  const exchange = exchangeRate(payment.currency, rate);
   if (!exchange || !amountPattern.test(payment.amount) || !amountPattern.test(payment.change_amount)) throw new Error("Completa los importes y verifica la tasa.");
   const amount = new decimal(payment.amount);
   const change = new decimal(payment.change_amount);

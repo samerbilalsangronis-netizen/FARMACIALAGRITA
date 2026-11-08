@@ -113,7 +113,9 @@ export function useOperation() {
             }
           }
           const failure = [...results.values()].find((receipt) => receipt.local);
-          const changed = results.size > 0 || renew || expired(stored) || Date.now() - Date.parse(stored.grant.issued_at) > 5 * 60_000;
+          const rateChanged = currentCatalog.rate?.id !== stored.grant.catalog.rate?.id;
+          const changed = results.size > 0 || renew || rateChanged || expired(stored) ||
+            Date.now() - Date.parse(stored.grant.issued_at) > 5 * 60_000;
           if (changed && sameSession() && navigator.onLine) {
             const grant = await rpc<Grant>("authorize_device");
             await serialize(async () => {

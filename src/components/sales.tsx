@@ -1,12 +1,16 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
 import { Check, CircleMinus, Plus, ScanLine, Search, ShoppingCart, Trash2 } from "lucide-react";
-import { currencies, decimal, displayDate, money, normalize, paymentValue, type Currency, type Customer, type Payment, type Product, type QueuedSale, type Receipt } from "@/lib/domain";
+import { amountInCurrency, currencies, currencyScale, decimal, displayDate, money, normalize, paymentValue, type Currency, type Customer, type Payment, type Product, type QueuedSale, type Receipt } from "@/lib/domain";
 import { expired } from "@/lib/vault";
 import { accessError, type Operation } from "@/lib/use-operation";
 import { rpc, supabase } from "@/lib/supabase";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
+
+const bolivars = new Intl.NumberFormat("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const displayPayment = (amount: string, currency: Currency) =>
+  currency === "VES" ? "Bs. " + bolivars.format(Number(amount)) : money(amount, currency);
 
 const payment = (): Payment => ({ currency: "USD", method: "cash", amount: "", change_amount: "0" });
 
@@ -54,9 +58,18 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
   const foreign = payments.some((p) => p.currency !== "USD");
   const localExpired = local ? expired(local) : false;
   const invalidCart = Object.keys(cart).length !== lines.length || lines.some((p) => p.stock < p.quantity);
-  const paid = payments.reduce((sum, line) => {
-    try { return sum.plus(paymentValue(line, rate).usd); } catch { return sum; }
-  }, new decimal(0));
+  const paymentValues = payments.map((line) => {
+    try { return new decimal(paymentValue(line, rate).usd); } catch { return new decimal(0); }
+  });
+  const paid = paymentValues.reduce((sum, value) => sum.plus(value), new decimal(0));
+  const balance = total.minus(paid);
+  const displayCurrency = payments.every(({ currency }) => currency === payments[0].currency) ? payments[0].currency : "USD";
+  const convertedTotal = amountInCurrency(total.toFixed(2), displayCurrency, rate);
+  const convertedBalance = amountInCurrency(balance.abs().toFixed(2), displayCurrency, rate);
+  const cartPrice = (usd: string) => {
+    const converted = amountInCurrency(usd, displayCurrency, rate);
+    return converted === null ? money(usd) : displayPayment(converted, displayCurrency);
+  };
 
   function change(p: Product, delta: number) {
     const quantity = (cart[p.id] ?? 0) + delta;
@@ -153,20 +166,23 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
         <div className="section-title"><div><h2>Venta actual</h2><p>{lines.length} productos distintos</p></div><ShoppingCart size={22} /></div>
         {!lines.length && <Empty>Agrega un medicamento para empezar.</Empty>}
         {lines.map((p) => <div className="cart-line" key={p.id}>
-          <div><strong>{p.name}</strong><small>{money(p.price)} por unidad</small></div>
+          <div><strong>{p.name}</strong><small>{cartPrice(String(p.price))} por unidad</small></div>
           <div className="quantity">
             <Button aria-label={"Quitar una unidad de " + p.name} className="icon-button" variant="ghost" disabled={busy} onClick={() => change(p, -1)}><CircleMinus size={18} /></Button>
             {p.quantity}
             <Button aria-label={"Agregar una unidad de " + p.name} className="icon-button" variant="ghost" disabled={busy || p.stock <= p.quantity} onClick={() => change(p, 1)}><Plus size={18} /></Button>
           </div>
-          <strong>{money(new decimal(p.price).times(p.quantity).toFixed(2))}</strong>
+          <strong>{cartPrice(new decimal(p.price).times(p.quantity).toFixed(2))}</strong>
         </div>)}
         {invalidCart && <Notice>El catálogo cambió. Retira las cantidades sin stock o vacía el carrito.</Notice>}
         {!!Object.keys(cart).length && <Button variant="ghost" disabled={busy} onClick={() => { draft.current = null; setCart({}); }}>Vaciar carrito</Button>}
         {op.profile?.role === "admin" && lines.length > 0 && <Field label="Descuento autorizado en USD"><input value={discountInput} disabled={busy} inputMode="decimal" onChange={(e) => {
           draft.current = null; setDiscountInput(e.target.value.replace(",", "."));
         }} /></Field>}
-        <div className="total"><span>Total de referencia</span><strong>{money(total.toFixed(2))}</strong></div>
+        <div className="total"><span>{convertedTotal === null || (displayCurrency === "USD" && foreign) ? "Total de referencia" : "Total a cobrar"}</span>
+          <strong>{convertedTotal === null ? money(total.toFixed(2)) : displayPayment(convertedTotal, displayCurrency)}</strong>
+        </div>
+        {displayCurrency !== "USD" && convertedTotal !== null && <p className="muted">Referencia {money(total.toFixed(2))}</p>}
         {op.connection === "online" && <Button variant="ghost" disabled={busy} onClick={() => void showCustomers()}>{customer?.name ?? "Cliente opcional"}</Button>}
         {customerOpen && op.connection === "online" && <div className="customer-box">
           <Field label="Cliente registrado"><select value={customer?.id ?? ""} onChange={(e) => { draft.current = null; setCustomer(customerList.find((c) => c.id === e.target.value) ?? null); }}>
@@ -190,25 +206,40 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
             <Button type="submit" variant="outline">Guardar cliente</Button>
           </form>
         </div>}
-        <div className="section-title payment-heading"><h3>Pagos</h3><Button variant="ghost" disabled={!lines.length || busy} onClick={() => {
-          draft.current = null; setPayments([{ ...payment(), amount: total.toFixed(2), method: methods.find((m) => m.code === "cash")?.code ?? methods[0]?.code ?? "cash" }]);
-        }}>Exacto en USD</Button></div>
-        {payments.map((line, index) => <div className="payment-row" key={index}>
-          <Field label="Moneda"><select value={line.currency} disabled={busy} onChange={(e) => editPayment(index, { currency: e.target.value as Currency })}>
-            {currencies.map((c) => <option key={c}>{c}</option>)}
-          </select></Field>
-          <Field label="Método"><select value={line.method} disabled={busy} onChange={(e) => editPayment(index, { method: e.target.value, change_amount: "0" })}>
-            {methods.map((m) => <option key={m.code} value={m.code}>{m.label}</option>)}
-          </select></Field>
-          <Field label="Recibido"><input value={line.amount} disabled={busy} inputMode="decimal" placeholder="0,00" onChange={(e) => editPayment(index, { amount: e.target.value.replace(",", ".") })} /></Field>
-          {line.method === "cash" && <Field label="Cambio"><input value={line.change_amount} disabled={busy} inputMode="decimal" onChange={(e) => editPayment(index, { change_amount: e.target.value.replace(",", ".") })} /></Field>}
-          {payments.length > 1 && <Button className="icon-button" aria-label="Eliminar pago" variant="ghost" disabled={busy} onClick={() => { draft.current = null; setPayments(payments.filter((_, i) => i !== index)); }}><Trash2 size={16} /></Button>}
-        </div>)}
+        <div className="section-title payment-heading"><h3>Pagos</h3></div>
+        {payments.map((line, index) => {
+          const remainder = balance.plus(paymentValues[index]);
+          const exact = remainder.gt(0) ? amountInCurrency(remainder.toFixed(2), line.currency, rate) : null;
+          let canFill = false;
+          if (exact && !busy && !invalidDiscount && lines.length && methods.some((method) => method.code === line.method)) {
+            try { canFill = remainder.eq(paymentValue({ ...line, amount: exact, change_amount: "0" }, rate).usd); } catch { /* The rounded value is not an exact payment. */ }
+          }
+          return <div key={index}>
+            <div className="payment-row">
+              <Field label="Moneda"><select aria-label="Moneda" value={line.currency} disabled={busy} onChange={(e) => editPayment(index, { currency: e.target.value as Currency, amount: "", change_amount: "0" })}>
+                {currencies.map((c) => <option key={c} value={c}>{c === "VES" ? "Bs. (VES)" : c}</option>)}
+              </select></Field>
+              <Field label="Método"><select aria-label="Método" value={line.method} disabled={busy} onChange={(e) => editPayment(index, { method: e.target.value, change_amount: "0" })}>
+                {methods.map((m) => <option key={m.code} value={m.code}>{m.label}</option>)}
+              </select></Field>
+              <Field label="Recibido"><input value={line.amount} disabled={busy} inputMode="decimal"
+                placeholder={currencyScale(line.currency) ? "0,00" : "0"}
+                onChange={(e) => editPayment(index, { amount: e.target.value.replace(",", ".") })} /></Field>
+              {line.method === "cash" && <Field label="Cambio"><input value={line.change_amount} disabled={busy} inputMode="decimal" onChange={(e) => editPayment(index, { change_amount: e.target.value.replace(",", ".") })} /></Field>}
+              {payments.length > 1 && <Button className="icon-button" aria-label="Eliminar pago" variant="ghost" disabled={busy} onClick={() => { draft.current = null; setPayments(payments.filter((_, i) => i !== index)); }}><Trash2 size={16} /></Button>}
+            </div>
+            {exact && canFill && <Button variant="ghost" onClick={() => editPayment(index, { amount: exact, change_amount: "0" })}>
+              Usar monto exacto · {displayPayment(exact, line.currency)}
+            </Button>}
+          </div>;
+        })}
         <Button variant="outline" disabled={busy || payments.length >= 20} onClick={() => { draft.current = null; setPayments([...payments, payment()]); }}><Plus size={16} /> Añadir pago</Button>
         {rate && <p className="muted">1 USD = {rate.ves} VES · {rate.cop} COP. Tasa del {displayDate(rate.created_at)}.</p>}
         {foreign && stale && <Notice>{local?.grant.stale_policy === "block" ? "La tasa venció y bloquea cobros en otras monedas." :
           <label className="checkline"><input type="checkbox" checked={staleConfirmed} onChange={(event) => { draft.current = null; setStaleConfirmed(event.target.checked); }} /> Confirmo el uso de la tasa guardada.</label>}</Notice>}
-        <div className="total small-total"><span>{paid.gt(total) ? "Cobro por ajustar" : "Pendiente por cobrar"}</span><strong>{money(total.minus(paid).abs().toFixed(2))}</strong></div>
+        <div className="total small-total"><span>{balance.lt(0) ? "Cobro por ajustar" : "Pendiente por cobrar"}</span>
+          <strong>{convertedBalance === null ? money(balance.abs().toFixed(2)) : displayPayment(convertedBalance, displayCurrency)}</strong>
+        </div>
         {!local && <>
           <Notice>{op.prepared ? "Desbloquea este dispositivo para confirmar la venta." : "Prepara este dispositivo con internet para confirmar la venta."}</Notice>
           <Button variant="outline" className="full" onClick={onPrepareDevice}>
