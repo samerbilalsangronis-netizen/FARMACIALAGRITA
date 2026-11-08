@@ -10,7 +10,11 @@ import { Empty, Field, Heading, Notice } from "./ui/shared";
 
 const payment = (): Payment => ({ currency: "USD", method: "cash", amount: "", change_amount: "0" });
 
-export function Sales({ op, onReceipt }: { op: Operation; onReceipt: (receipt: Receipt) => void }) {
+export function Sales({ op, onReceipt, onPrepareDevice }: {
+  op: Operation;
+  onReceipt: (receipt: Receipt) => void;
+  onPrepareDevice: () => void;
+}) {
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<Record<string, number>>({});
   const [discountInput, setDiscountInput] = useState("0");
@@ -123,7 +127,6 @@ export function Sales({ op, onReceipt }: { op: Operation; onReceipt: (receipt: R
 
   return <>
     <Heading label="OPERACIÓN" title="Punto de venta">Busca los medicamentos, registra el cobro y guarda el comprobante interno.</Heading>
-    {!local && <Notice>Abre «Preparar dispositivo» en la barra superior para habilitar el registro de ventas.</Notice>}
     {localExpired && <Notice>La autorización de este dispositivo venció. Renueva el acceso con conexión.</Notice>}
     {error && <Notice>{error}</Notice>}
     <div className="checkout">
@@ -206,6 +209,12 @@ export function Sales({ op, onReceipt }: { op: Operation; onReceipt: (receipt: R
         {foreign && stale && <Notice>{local?.grant.stale_policy === "block" ? "La tasa venció y bloquea cobros en otras monedas." :
           <label className="checkline"><input type="checkbox" checked={staleConfirmed} onChange={(event) => { draft.current = null; setStaleConfirmed(event.target.checked); }} /> Confirmo el uso de la tasa guardada.</label>}</Notice>}
         <div className="total small-total"><span>{paid.gt(total) ? "Cobro por ajustar" : "Pendiente por cobrar"}</span><strong>{money(total.minus(paid).abs().toFixed(2))}</strong></div>
+        {!local && <>
+          <Notice>{op.prepared ? "Desbloquea este dispositivo para confirmar la venta." : "Prepara este dispositivo con internet para confirmar la venta."}</Notice>
+          <Button variant="outline" className="full" onClick={onPrepareDevice}>
+            {op.prepared ? "Desbloquear este dispositivo" : "Preparar este dispositivo"}
+          </Button>
+        </>}
         <Button className="full" disabled={busy || !local || localExpired || invalidCart || invalidDiscount || !lines.length} onClick={() => void confirm()}>
           <Check size={18} /> {busy ? "Guardando…" : "Confirmar venta"}
         </Button>

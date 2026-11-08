@@ -52,7 +52,14 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   await page.getByLabel("Contraseña").fill("prueba-ficticia");
   await page.getByRole("button", { name: "Ingresar" }).click();
   await expect(page.getByRole("heading", { name: "Resumen de la farmacia" })).toBeVisible();
-  await page.getByRole("button", { name: "Preparar dispositivo" }).click();
+  await page.getByRole("button", { name: "Abrir punto de venta" }).click();
+  await page.getByRole("button", { name: "Añadir Acetaminofén" }).click();
+  await page.getByRole("button", { name: "Exacto en USD" }).click();
+  const confirmSale = page.getByRole("button", { name: "Confirmar venta" });
+  await expect(confirmSale).toBeDisabled();
+  await expect(page.getByText("Prepara este dispositivo con internet para confirmar la venta.")).toBeVisible();
+  await page.getByRole("button", { name: "Preparar este dispositivo", exact: true }).click();
+  await expect(page.getByLabel("Clave del dispositivo", { exact: true })).toBeFocused();
   await page.getByLabel("Clave del dispositivo", { exact: true }).fill("mi clave local de prueba");
   await page.getByLabel("Confirmar clave").fill("mi clave local de prueba");
   await page.getByRole("button", { name: "Autorizar dispositivo" }).click();
@@ -61,10 +68,8 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   await expect(page.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
 
   await context.setOffline(true);
-  await page.getByRole("button", { name: "Abrir punto de venta" }).click();
-  await page.getByRole("button", { name: "Añadir Acetaminofén" }).click();
-  await page.getByRole("button", { name: "Exacto en USD" }).click();
-  await page.getByRole("button", { name: "Confirmar venta" }).click();
+  await expect(confirmSale).toBeEnabled();
+  await confirmSale.click();
   await expect(page.getByText("COMPROBANTE INTERNO DE CONTROL — NO ES FACTURA FISCAL")).toBeVisible();
   await expect(page.getByText("1 venta pendiente de sincronizar", { exact: false })).toBeVisible();
   expect(accepted.size).toBe(0);

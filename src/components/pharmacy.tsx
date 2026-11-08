@@ -49,6 +49,10 @@ export function Pharmacy() {
   const pending = op.local?.sales.filter(({ receipt }) => receipt.local).length ?? 0;
   const connection = { online: "En línea", offline: "Sin conexión", syncing: "Sincronizando", error: "Revisar sincronización" }[op.connection];
   const change = (next: View) => { setView(next); setMenu(false); };
+  function openDeviceSetup() {
+    setDevice(true);
+    requestAnimationFrame(() => document.getElementById("device-passphrase")?.focus());
+  }
   return <div className="app-shell">
     {menu && <button className="sidebar-backdrop" aria-label="Cerrar menú" onClick={() => setMenu(false)} />}
     <aside className={"sidebar" + (menu ? " sidebar-open" : "")}>
@@ -61,7 +65,7 @@ export function Pharmacy() {
           </button>)}
       </nav>
       <div className="sidebar-bottom">
-        <div className="sidebar-ready"><ShieldCheck size={20} /><div><b>{op.local && op.workerReady ? "Dispositivo preparado" : "Modo de contingencia"}</b><small>{op.local && op.workerReady ? "La app puede abrirse sin red." : "Prepara el acceso con internet."}</small></div></div>
+        <div className="sidebar-ready"><ShieldCheck size={20} /><div><b>{op.local && op.workerReady ? "Dispositivo preparado" : op.local ? "Preparando acceso sin conexión" : op.prepared ? "Dispositivo bloqueado" : "Dispositivo sin preparar"}</b><small>{op.local && op.workerReady ? "La app puede abrirse sin red." : "Prepara el acceso con internet."}</small></div></div>
         <div className="sidebar-user"><div className="avatar">{op.profile.username.slice(0, 2).toUpperCase()}</div><div><strong>{op.profile.username}</strong><small>{op.profile.role === "admin" ? "Administrador" : "Cajero"}</small></div>
           <Button variant="ghost" className="icon-button" aria-label="Bloquear sesión" title="Bloquear sesión" onClick={() => {
             setReceipt(null); setView("dashboard"); setDevice(false); setReconnect(false); void op.lock();
@@ -89,7 +93,7 @@ export function Pharmacy() {
         {op.syncProblem && <Notice>{op.syncProblem}</Notice>}
         <motion.div key={current} className="view" initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
           {current === "dashboard" && <Dashboard op={op} open={change} />}
-          {current === "sales" && <Sales op={op} onReceipt={setReceipt} />}
+          {current === "sales" && <Sales op={op} onReceipt={setReceipt} onPrepareDevice={openDeviceSetup} />}
           {current === "inventory" && <Inventory op={op} />}
           {current === "history" && <Records op={op} onReceipt={setReceipt} />}
           {current === "customers" && <Customers op={op} />}
@@ -161,7 +165,7 @@ function DeviceSetup({ op }: { op: Operation }) {
       setBusy(true); setError("");
       try { await op.prepare(passphrase); } catch (error) { setError(accessError(error)); } finally { setBusy(false); }
     }}>
-      <Field label="Clave del dispositivo"><input name="phrase" type="password" autoComplete={op.prepared ? "off" : "new-password"} required minLength={12} maxLength={128} /></Field>
+      <Field label="Clave del dispositivo"><input id="device-passphrase" name="phrase" type="password" autoComplete={op.prepared ? "off" : "new-password"} required minLength={12} maxLength={128} /></Field>
       {!op.prepared && <Field label="Confirmar clave"><input name="confirm" type="password" autoComplete="new-password" required minLength={12} maxLength={128} /></Field>}
       <div><Button type="submit" disabled={busy}>{busy ? "Preparando…" : op.prepared ? "Desbloquear" : "Autorizar dispositivo"}</Button></div>
     </form>
