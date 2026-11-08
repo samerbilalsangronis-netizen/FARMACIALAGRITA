@@ -186,15 +186,76 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
   const [from, setFrom] = useState(localDay());
   const [to, setTo] = useState(localDay());
   const [error, setError] = useState("");
-  const stats = summarize(op.receipts.filter((r) => {
+  const periodReceipts = op.receipts.filter((r) => {
     const day = localDay(r.occurred_at);
     return (!from || day >= from) && (!to || day <= to);
-  }));
+  });
+  const stats = summarize(periodReceipts);
   const labelFor = (method: string) => op.catalog?.methods.find((m) => m.code === method)?.label ?? method;
   const exportName = emergency ? "cierre-de-emergencia" : "reporte-de-ventas";
   const dates = [...stats.byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
   const max = Math.max(1, ...dates.map(([, value]) => value.toNumber()));
   const low = (op.catalog?.products ?? []).filter((p) => p.active && p.stock <= p.min_stock).sort((a, b) => a.stock - b.stock);
+  async function exportReportPdf() {
+    const { createReportPdf } = await import("@/lib/report-pdf");
+    const formatDay = (day: string) => day.split("-").reverse().join("/");
+    const period = from && to ? formatDay(from) + " al " + formatDay(to) :
+      from ? "Desde el " + formatDay(from) : to ? "Hasta el " + formatDay(to) : "Todo el período disponible";
+    const coverage = [
+      op.connection === "offline" ? "El informe reúne los datos disponibles sin conexión en este dispositivo y en la sesión." : "",
+      op.historyTruncated ? "Hay operaciones anteriores sin cargar que pueden quedar fuera del informe." : "",
+      stats.localCount ? "El total incluye ventas aún pendientes de sincronizar." : "",
+    ].filter(Boolean).join(" ");
+    const settings = op.catalog?.settings;
+    const right = (label: string, width: number) => ({ label, width, align: "right" as const });
+    const count = new Intl.NumberFormat("es-VE");
+    const statusCounts = [
+      ["Sincronizadas", stats.rows.filter((r) => !r.local).length],
+      ["Por sincronizar", stats.rows.filter((r) => r.local === "pending").length],
+      ["Con error de sincronización", stats.rows.filter((r) => r.local === "error").length],
+      ["Pendientes fiscales o en revisión", stats.fiscalCount],
+      ["Trasladadas al sistema fiscal", stats.rows.filter((r) => r.fiscal_status === "transferred").length],
+      ["Con inventario por conciliar", stats.rows.filter((r) => r.reconciliation).length],
+      ["Anuladas (excluidas de los totales)", periodReceipts.length - stats.rows.length],
+    ] as const;
+    const pdf = createReportPdf({
+      title: emergency ? "Cierre de emergencia" : "Reporte de ventas",
+      pharmacy: settings?.pharmacy_name ?? "Farmacia La Grita",
+      address: settings?.address,
+      phone: settings?.phone,
+      period,
+      issuedAt: displayDate(new Date().toISOString()),
+      coverage,
+      indicators: [
+        { label: "TOTAL DE REFERENCIA", value: money(stats.total.toFixed(2)) },
+        { label: "VENTAS VIGENTES", value: count.format(stats.rows.length) },
+        { label: "UNIDADES VENDIDAS", value: count.format(stats.units) },
+        { label: "TICKET PROMEDIO", value: money(stats.rows.length ? stats.total.div(stats.rows.length).toFixed(2) : "0") },
+        { label: "POR SINCRONIZAR", value: count.format(stats.localCount) },
+        { label: "PENDIENTES FISCALES", value: count.format(stats.fiscalCount) },
+      ],
+      sections: [
+        { title: "Cobros netos por moneda", columns: [{ label: "Moneda", width: 100 }, right("Total neto", 78)],
+          rows: stats.amounts.map(({ currency, total }) => [currency, money(total.toString(), currency)]) },
+        { title: "Desglose por método de pago", columns: [{ label: "Método", width: 88 }, { label: "Moneda", width: 28 }, right("Total neto", 62)],
+          rows: stats.payments.map((p) => [labelFor(p.method), p.currency, money(p.net.toString(), p.currency)]) },
+        { title: "Estado de las operaciones", columns: [{ label: "Estado", width: 128 }, right("Operaciones", 50)],
+          rows: statusCounts.map(([label, value]) => [label, count.format(value)]) },
+        { title: "Productos vendidos", columns: [{ label: "Producto", width: 130 }, right("Unidades", 48)],
+          rows: stats.products.map((p) => [p.name, count.format(p.quantity)]) },
+        { title: "Ventas por día", columns: [{ label: "Fecha", width: 100 }, right("Total de referencia", 78)],
+          rows: dates.map(([day, total]) => [formatDay(day), money(total.toFixed(2))]) },
+        { title: "Actividad por cajero", columns: [{ label: "Cajero", width: 78 }, right("Ventas", 36), right("Total de referencia", 64)],
+          rows: [...stats.byCashier].map(([cashier, data]) => [cashier, count.format(data.count), money(data.total.toFixed(2))]) },
+        { title: "Detalle de operaciones", columns: [{ label: "Fecha y hora", width: 30 }, { label: "Referencia", width: 26 },
+          { label: "Cajero", width: 27 }, { label: "Sincronización", width: 35 }, { label: "Estado fiscal", width: 26 }, right("Total", 34)],
+          rows: periodReceipts.map((r) => [displayDate(r.occurred_at), r.id.slice(0, 8), r.cashier_name,
+            r.local === "error" ? "Error" : r.local ? "Pendiente" : "Sincronizada", fiscalLabels[r.fiscal_status], money(r.total)]) },
+      ],
+    });
+    pdf.save(exportName + ".pdf");
+  }
+
   return <>
     <Heading label="ANÁLISIS" title={emergency ? "Cierre de emergencia" : "Reportes"}>{emergency ? "Reúne las ventas del apagón y separa lo cobrado por moneda." : "Revisa ventas por período, productos y actividad por cajero."}</Heading>
     {error && <Notice>{error}</Notice>}
@@ -205,6 +266,7 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
       <Field label="Hasta"><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
       {(["csv", "pdf"] as const).map((format) => <Button key={format} variant="outline" onClick={async () => {
         try {
+          if (format === "pdf") return await exportReportPdf();
           const rows: ExportCell[][] = [
             ["Período", from + " a " + to], ["Ventas", stats.rows.length], ["Total USD de referencia", stats.total.toFixed(2)],
             ["Unidades", stats.units], ["Pendientes de sincronizar", stats.localCount], ["Pendientes fiscales", stats.fiscalCount],
