@@ -71,6 +71,7 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
 
   await page.close();
   const reopened = await context.newPage();
+  reopened.on("pageerror", (error) => errors.push(error.message));
   await reopened.goto("/");
   await reopened.getByRole("button", { name: "Acceder sin conexión" }).click();
   await reopened.getByLabel("Nombre de usuario").fill("cajero01");
@@ -84,7 +85,7 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   await reopened.getByRole("button", { name: "Reconectar", exact: true }).click();
   await reopened.getByLabel("Contraseña de usuario").fill("prueba-ficticia");
   await reopened.getByRole("button", { name: "Ingresar y sincronizar" }).click();
-  await expect(reopened.getByText("Sincronizada", { exact: true })).toBeVisible();
+  await expect(reopened.getByRole("table").getByText("Sincronizada", { exact: true })).toBeVisible();
   await reopened.getByRole("button", { name: "Actualizar y sincronizar" }).click();
   await expect(reopened.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
   expect(sendCount).toBe(1);

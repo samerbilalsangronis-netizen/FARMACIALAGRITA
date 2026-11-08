@@ -49,3 +49,11 @@ El asistente identifica por código interno, señala conflictos de código o có
 - `npm test` comprueba cálculos decimales y migraciones, permisos, importación idempotente, ventas, conciliación y estados fiscales sobre PostgreSQL en PGlite.
 - `npx playwright install chromium` y `npm run test:e2e` ejecutan el flujo offline de la PWA en Chromium con un backend simulado. El entorno de prueba usa credenciales ficticias.
 - Antes del piloto, repite el recorrido en Vercel con el proyecto real de Supabase, dos cuentas, dos dispositivos, datos ficticios y la impresora que se utilizará. Verifica en particular el reinicio offline, las ventas concurrentes con el mismo stock, los permisos, el traslado fiscal y la recuperación de operaciones pendientes.
+
+### Actualizar una instalación existente
+
+Si ya aplicaste las tres primeras migraciones, ejecuta solo [202611080004_fiscal_lock_order.sql](supabase/migrations/202611080004_fiscal_lock_order.sql) en Supabase. Corrige el orden de bloqueos al anular una venta al mismo tiempo que se ajusta el inventario.
+
+### Limpieza después de las pruebas
+
+El archivo [limpieza_preentrega.sql](supabase/limpieza_preentrega.sql) se ejecuta manualmente en el SQL Editor. En modo `SIMULAR` solo muestra los conteos. El modo de borrado vacía el historial operativo completo y se usa únicamente si todos esos registros son ficticios. Conserva las cuentas, los perfiles, la configuración y los métodos de pago. Cierra las cajas, revisa que las colas de prueba se hayan sincronizado y exporta cualquier dato que quieras conservar antes de usarlo. Después, borra los datos locales del sitio en los dispositivos usados para pruebas, vuelve a prepararlos con internet y configura las tasas vigentes.
