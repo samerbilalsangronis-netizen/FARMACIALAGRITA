@@ -1,13 +1,13 @@
 importScripts("/precache.generated.js");
 const { version, files } = self.PHARMACY_ASSETS;
 const CACHE = "pharmacy-shell-" + version;
-const ASSETS = new Set(files);
+const ASSETS = new Set([...files, "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/farmaworld-logo.jpeg"]);
 const root = () => new Request(new URL("/", self.location.origin), { cache: "reload" });
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    await cache.addAll([root(), "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", ...files]);
+    await cache.addAll([root(), ...ASSETS]);
     await self.skipWaiting();
   })());
 });
@@ -28,8 +28,7 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(caches.open(CACHE).then(async (cache) => (await cache.match(root())) || fetch(event.request)));
     return;
   }
-  if (ASSETS.has(url.pathname) || url.pathname.startsWith("/_next/static/") ||
-      ["/manifest.webmanifest", "/icon-192.png", "/icon-512.png"].includes(url.pathname)) {
+  if (ASSETS.has(url.pathname) || url.pathname.startsWith("/_next/static/")) {
     event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
   }
 });

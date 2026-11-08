@@ -9,6 +9,8 @@ export type ReportSection = {
 export type ReportPdf = {
   title: string;
   pharmacy: string;
+  logo: Uint8Array;
+  rif: string;
   address?: string;
   phone?: string;
   period: string;
@@ -19,8 +21,8 @@ export type ReportPdf = {
 };
 
 const colors = {
-  forest: "#123D35", teal: "#087C65", green: "#BFF2DD", ink: "#14352D", muted: "#4D6159",
-  line: "#D9E7DF", mint: "#ECF8F2", pale: "#F5F8F6", white: "#FFFFFF", amber: "#8A5917", sand: "#FFF3DD",
+  forest: "#102E61", teal: "#00738C", green: "#D1F3FA", ink: "#173354", muted: "#4D6377",
+  line: "#DAE8EE", mint: "#EAF6FA", pale: "#F4F8FA", white: "#FFFFFF", amber: "#8A5917", sand: "#FFF3DD",
 };
 
 function printable(text: string) {
@@ -52,17 +54,17 @@ export function createReportPdf(report: ReportPdf) {
   function header(first: boolean) {
     if (first) {
       font(15, colors.white, true);
-      const pharmacy = wrap(report.pharmacy, 141);
-      const titleTop = 38 + (pharmacy.length - 1) * 6;
+      const pharmacy = wrap(report.pharmacy, 95);
+      const titleTop = Math.max(47, 37 + (pharmacy.length - 1) * 6);
       font(9, colors.green);
-      const address = [report.address, report.phone].filter(Boolean).join("  |  ");
+      const address = ["RIF " + report.rif, report.address, report.phone].filter(Boolean).join("  |  ");
       const contact = address ? wrap(address, width - 4) : [];
       const headerHeight = titleTop + 19 + contact.length * 4;
       fill(0, 0, 210, headerHeight, colors.forest);
       fill(0, 0, 210, 2, colors.teal);
-      fill(178, 13, 16, 16, colors.teal);
-      fill(184.5, 16, 3, 10, colors.green);
-      fill(181, 19.5, 10, 3, colors.green);
+      const logo = doc.getImageProperties(report.logo);
+      const logoWidth = 76;
+      doc.addImage(report.logo, "JPEG", left + width - logoWidth, 9, logoWidth, logoWidth * logo.height / logo.width);
       font(8, colors.green, true);
       doc.text("FARMACIA  /  CONTROL OPERATIVO", left, 16);
       font(15, colors.white, true);

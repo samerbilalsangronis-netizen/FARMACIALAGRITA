@@ -1,4 +1,5 @@
 "use client";
+import { pharmacyBrand, pharmacyDisplayName } from "@/lib/brand";
 import { useState } from "react";
 import { ArrowDownToLine, ClipboardCheck, FileText, Printer, X } from "lucide-react";
 import { currencies, decimal, disclaimer, displayDate, localDay, money, normalize, type Catalog, type Receipt } from "@/lib/domain";
@@ -20,7 +21,7 @@ export function ReceiptView({ receipt, catalog, close }: { receipt: Receipt; cat
       <div className="receipt-tools"><h2>Comprobante interno</h2><Button aria-label="Cerrar comprobante" variant="ghost" className="icon-button" onClick={close}><X size={20} /></Button></div>
       {error && <Notice>{error}</Notice>}
       <article id="print-receipt" className={"receipt-paper print-" + width}>
-        <h2>{catalog?.settings.pharmacy_name ?? "Farmacia La Grita"}</h2>
+        <h2>{pharmacyDisplayName(catalog?.settings.pharmacy_name)}</h2>
         <p>{catalog?.settings.address} {catalog?.settings.phone}</p>
         <p className="receipt-warning">{disclaimer}</p>
         <small>Operación {receipt.id}</small>
@@ -45,7 +46,7 @@ export function ReceiptView({ receipt, catalog, close }: { receipt: Receipt; cat
         <Button variant="outline" onClick={async () => {
           try {
             const rows: ExportCell[][] = [
-              [catalog?.settings.pharmacy_name ?? "Farmacia La Grita", disclaimer],
+              [pharmacyDisplayName(catalog?.settings.pharmacy_name), disclaimer],
               ["Identificador", receipt.id], ["Fecha", displayDate(receipt.occurred_at)],
               ["Cajero", receipt.cashier_name], ["Cliente", receipt.customer_name], ["Estado", syncLabel(receipt)],
               ...receipt.sale_items.map((item) => [item.name, item.quantity, money(item.unit_price), money(new decimal(item.unit_price).times(item.quantity).toFixed(2))]),
@@ -197,7 +198,8 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
   const max = Math.max(1, ...dates.map(([, value]) => value.toNumber()));
   const low = (op.catalog?.products ?? []).filter((p) => p.active && p.stock <= p.min_stock).sort((a, b) => a.stock - b.stock);
   async function exportReportPdf() {
-    const { createReportPdf } = await import("@/lib/report-pdf");
+    const [{ createReportPdf }, logo] = await Promise.all([import("@/lib/report-pdf"), fetch(pharmacyBrand.logo)]);
+    if (!logo.ok) throw new Error("No se pudo cargar el logo del reporte. Abre la app con internet para actualizarlo.");
     const formatDay = (day: string) => day.split("-").reverse().join("/");
     const period = from && to ? formatDay(from) + " al " + formatDay(to) :
       from ? "Desde el " + formatDay(from) : to ? "Hasta el " + formatDay(to) : "Todo el período disponible";
@@ -220,7 +222,9 @@ export function Reports({ op, emergency }: { op: Operation; emergency: boolean }
     ] as const;
     const pdf = createReportPdf({
       title: emergency ? "Cierre de emergencia" : "Reporte de ventas",
-      pharmacy: settings?.pharmacy_name ?? "Farmacia La Grita",
+      pharmacy: pharmacyDisplayName(settings?.pharmacy_name),
+      logo: new Uint8Array(await logo.arrayBuffer()),
+      rif: pharmacyBrand.rif,
       address: settings?.address,
       phone: settings?.phone,
       period,

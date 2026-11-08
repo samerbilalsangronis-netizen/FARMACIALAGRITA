@@ -1,4 +1,5 @@
 "use client";
+import { pharmacyDisplayName } from "@/lib/brand";
 import { useState, type FormEvent } from "react";
 import { amountPattern, decimal, displayDate, money, normalize, type Customer, type Profile } from "@/lib/domain";
 import { rpc, supabase } from "@/lib/supabase";
@@ -65,7 +66,7 @@ export function Settings({ op }: { op: Operation }) {
           await rpc("save_settings", { data: Object.fromEntries(data) });
           await op.sync(true);
         }, "Configuración guardada.")}>
-          <Field label="Nombre de la farmacia"><input name="pharmacy_name" defaultValue={settings.pharmacy_name} maxLength={120} required /></Field>
+          <Field label="Nombre de la farmacia"><input name="pharmacy_name" defaultValue={pharmacyDisplayName(settings.pharmacy_name)} maxLength={120} required /></Field>
           <div className="form-grid">
             <Field label="Dirección"><input name="address" defaultValue={settings.address} maxLength={220} /></Field>
             <Field label="Teléfono"><input name="phone" defaultValue={settings.phone} maxLength={40} /></Field>

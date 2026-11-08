@@ -1,8 +1,12 @@
 import type { ReactNode } from "react";
-import { AlertCircle, CheckCircle2, HeartPulse } from "lucide-react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { pharmacyBrand } from "@/lib/brand";
 
-export function Brand({ compact = false }: { compact?: boolean }) {
-  return <div className="brand"><div className="brand-icon"><HeartPulse size={22} /></div><div><strong>Farmacia La Grita</strong>{!compact && <small>CONTROL OPERATIVO</small>}</div></div>;
+export function Brand() {
+  return <div className="brand">
+    <img src={pharmacyBrand.logo} alt={pharmacyBrand.name} width={1280} height={539} />
+    <small>CONTROL OPERATIVO</small>
+  </div>;
 }
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="field"><span>{label}</span>{children}</label>;

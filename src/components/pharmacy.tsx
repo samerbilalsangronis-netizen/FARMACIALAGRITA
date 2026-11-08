@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { pharmacyBrand } from "@/lib/brand";
 import { motion, useReducedMotion } from "framer-motion";
 import { Activity, ArrowDownToLine, ArrowRight, BarChart3, BatteryCharging, CalendarClock, ClipboardCheck, Clock3, CloudOff, HeartPulse, History, LayoutGrid, LockKeyhole, Menu, Package, RefreshCw, Settings2, ShieldCheck, ShoppingCart, Users, Wifi, X } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -140,7 +141,7 @@ function Login({ op }: { op: Operation }) {
       <div className="grid-overlay" aria-hidden="true" />
       <div className="login-aside-inner">
         <div className="login-emblem"><HeartPulse size={46} strokeWidth={1.5} /></div>
-        <p className="eyebrow">FARMACIA LA GRITA</p>
+        <p className="eyebrow">{pharmacyBrand.name.toUpperCase()}</p>
         <h2>Ventas e inventario durante un apagón</h2>
         <p>Registra ventas y conserva tus comprobantes en un dispositivo preparado. Sincroniza al volver la conexión.</p>
         <div className="login-tags"><span><CloudOff size={16} /> Acceso sin conexión</span><span><ShieldCheck size={16} /> Control interno</span></div>

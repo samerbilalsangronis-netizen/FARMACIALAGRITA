@@ -25,10 +25,10 @@ button{font:inherit}
 .button-danger:not(:disabled):hover{background:#f6d5ce}
 .icon-button{padding:7px;min-width:40px}
 .full{width:100%}
-.brand{display:flex;gap:11px;align-items:center}
-.brand-icon{width:42px;height:42px;border-radius:12px;background:var(--green);color:#ecfff3;display:grid;place-items:center;flex:none}
-.brand strong{font-size:16px;letter-spacing:-.025em;display:block}
-.brand small{display:block;font-size:9px;font-weight:750;letter-spacing:.12em;margin-top:3px}
+.brand{display:grid;gap:3px;justify-items:start;min-width:0}
+.brand img{display:block;width:215px;max-width:100%;height:auto;border-radius:6px}
+.brand small{display:block;padding-left:8%;font-size:9px;font-weight:750;letter-spacing:.12em}
+.sidebar-brand .brand img{width:183px}
 .eyebrow{font-size:11px;font-weight:760;letter-spacing:.15em;color:var(--green)}
 .login-shell{min-height:100dvh;display:grid;grid-template-columns:minmax(390px,1.02fr) minmax(360px,1fr);background:#fff}
 .login-left{display:flex;flex-direction:column;min-height:100dvh;padding:clamp(24px,4vw,60px)}
