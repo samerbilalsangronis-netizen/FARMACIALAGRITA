@@ -1,5 +1,7 @@
 import { normalize, productFields, productSchema, type Product, type ProductField } from "./domain";
 
+const importProductSchema = productSchema.extend({ price: productSchema.shape.price.optional() });
+
 type Mapping = Partial<Record<ProductField, number>>;
 const aliases: Partial<Record<ProductField, string[]>> = {
   code: ["codigo", "codigo interno", "sku", "referencia", "cod", "code"], barcode: ["codigo de barras", "ean", "barcode"],
@@ -64,6 +66,7 @@ export function reviewInventory(rows: string[][], mapping: Mapping, selected: Se
       const index = mapping[field];
       if (index !== undefined) values[field] = normalizedValue(field, String(row[index] ?? "").trim());
     }
+    if (values.price === "") delete values.price;
     const code = values.code?.toUpperCase();
     if (code) codeCount.set(code, (codeCount.get(code) ?? 0) + 1);
     if (values.barcode) barcodeCount.set(values.barcode, (barcodeCount.get(values.barcode) ?? 0) + 1);
@@ -81,9 +84,9 @@ export function reviewInventory(rows: string[][], mapping: Mapping, selected: Se
       return before === incoming ? [] : [{ field, label, before, after: incoming }];
     });
     const heldStock = existing && values.stock && String(existing.stock) !== values.stock ? values.stock : null;
-    const data = existing ? { code: existing.code, name: existing.name, price: String(existing.price),
+    const data = existing ? { code: existing.code, name: existing.name, price: existing.price === null ? undefined : String(existing.price),
       ...Object.fromEntries(changes.map(({ field, after }) => [field, after])) } : values;
-    const checked = productSchema.safeParse(data);
+    const checked = importProductSchema.safeParse(data);
     const status = repeated ? "duplicate" : !checked.success ? "error" : !existing ? "new" : changes.length ? "update" : "skip";
     const problems = checked.success ? "" : checked.error.issues.map(({ path }) => productFields.find(([field]) => field === path[0])?.[1] ?? String(path[0])).join(", ");
     return { index: i + 2, name: values.name ?? existing?.name ?? "", code: values.code ?? "", status, changes, heldStock,

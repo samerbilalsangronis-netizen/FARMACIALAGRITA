@@ -46,6 +46,23 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
   const updated = (await rpc("public.catalog()")).products[0];
   await assert.rejects(rpc("public.save_product($1,$2)", [{ code: "ACET-1", stock: 99 }, updated.updated_at]), /ajuste auditado/);
 
+  const pendingImport = [{ expected: null, data: { code: "PEND-01", name: "Producto sin precio", stock: 7 } }];
+  assert.deepEqual(await rpc("public.import_products($1,$2,$3)", [crypto.randomUUID(), "sin-precio.csv", pendingImport]), { created: 1, updated: 0 });
+  const pending = (await rpc("public.catalog()")).products.find(({ code }) => code === "PEND-01");
+  assert.equal(pending.price, null);
+  assert.equal(pending.price_id, null);
+  assert.equal(pending.stock, 7);
+  assert.equal(pending.active, false);
+  await as(first);
+  assert.equal((await rpc("public.catalog()")).products.some(({ id }) => id === pending.id), false);
+  await as(admin);
+  await rpc("public.save_product($1,$2)", [{ code: "PEND-01", price: "2.50", active: true }, pending.updated_at]);
+  await as(first);
+  const sellable = (await rpc("public.catalog()")).products.find(({ id }) => id === pending.id);
+  assert.equal(sellable.price, 2.5);
+  assert.ok(sellable.price_id);
+  assert.equal(sellable.stock, 7);
+
   await as(first);
   await assert.rejects(rpc("public.save_product($1)", [{ code: "B", name: "B", price: 1 }]), /no autorizada/);
   await assert.rejects(db.exec("update public.products set stock=20"), /permission denied/);

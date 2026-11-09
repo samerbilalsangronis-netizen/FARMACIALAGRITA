@@ -17,7 +17,7 @@ const column = createColumnHelper<Product>();
 const columns = [
   column.accessor("name", { header: "Producto", cell: ({ row }) => <><strong>{row.original.name}</strong><small>{row.original.code} · {row.original.presentation || "Sin presentación"}</small></> }),
   column.accessor("category", { header: "Categoría", cell: ({ getValue }) => getValue() || "—" }),
-  column.accessor("price", { header: "Precio", cell: ({ getValue }) => money(getValue()) }),
+  column.accessor("price", { header: "Precio", cell: ({ getValue }) => { const price = getValue(); return price === null ? <span className="pill warning">Pendiente de precio</span> : money(price); } }),
   column.accessor("stock", { header: "Existencias", cell: ({ row }) => <span className={row.original.stock <= row.original.min_stock ? "pill warning" : "pill"}>{row.original.stock} unidades</span> }),
   column.accessor("expiration", { header: "Vencimiento", cell: ({ getValue }) => getValue() ?? "—" }),
   column.accessor("active", { header: "Estado", cell: ({ getValue }) => getValue() ? "Activo" : "Inactivo" }),
@@ -39,7 +39,7 @@ export function Inventory({ op }: { op: Operation }) {
   const filtered = useMemo(() => {
     const search = normalize(query.trim());
     return products.filter((p) => normalize([p.code, p.barcode, p.name, p.category, p.ingredient].join(" ")).includes(search) &&
-      (filter === "all" || (filter === "low" && p.active && p.stock <= p.min_stock) || (filter === "inactive" && !p.active) ||
+      (filter === "all" || (filter === "unpriced" && p.price === null) || (filter === "low" && p.active && p.stock <= p.min_stock) || (filter === "inactive" && !p.active) ||
         (filter === "expiring" && p.active && p.expiration && p.expiration <= expiryLimit)));
   }, [products, query, filter, expiryLimit]);
   const index = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
@@ -84,7 +84,7 @@ export function Inventory({ op }: { op: Operation }) {
           <div className="toolbar">
             <div className="search"><Search size={17} /><input aria-label="Filtrar inventario" placeholder="Buscar producto o código…" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} /></div>
             <select aria-label="Estado de inventario" value={filter} onChange={(event) => { setFilter(event.target.value); setPage(0); }}>
-              <option value="all">Todos los productos</option><option value="low">Bajo stock</option><option value="expiring">Vencidos o próximos</option><option value="inactive">Inactivos</option>
+              <option value="all">Todos los productos</option><option value="unpriced">Pendientes de precio</option><option value="low">Bajo stock</option><option value="expiring">Vencidos o próximos</option><option value="inactive">Inactivos</option>
             </select>
             {admin && <Button variant="outline" onClick={() => void exportTable("inventario", productFields.map(([, label]) => label), filtered.map((p) => productFields.map(([field]) => p[field]))).catch((e) => setError(accessError(e)))}><ArrowDownToLine size={17} /> Exportar CSV</Button>}
           </div>
@@ -103,7 +103,7 @@ export function Inventory({ op }: { op: Operation }) {
 
 function ProductForm({ product, online, onSaved, onCancel }: { product?: Product; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
   const { register, handleSubmit, formState } = useForm<Partial<Record<ProductField, string>> & { active: boolean }>({
-    defaultValues: { ...Object.fromEntries(productFields.map(([field]) => [field, String(product?.[field] ?? "")])), active: product?.active ?? true },
+    defaultValues: { ...Object.fromEntries(productFields.map(([field]) => [field, String(product?.[field] ?? "")])), active: product?.price === null ? true : product?.active ?? true },
   });
   const [error, setError] = useState("");
   const submit = handleSubmit(async (values) => {
@@ -123,6 +123,7 @@ function ProductForm({ product, online, onSaved, onCancel }: { product?: Product
     } catch (error) { setError(accessError(error)); }
   });
   return <section className="card stack"><h2>{product ? "Editar medicamento" : "Registrar medicamento"}</h2>
+    {product?.price === null && <p className="muted">Registra el precio de venta en USD para habilitar este producto en caja.</p>}
     {!online && <Notice>El formulario sigue abierto. Conéctate a internet para guardar el producto.</Notice>}
     {error && <Notice>{error}</Notice>}
     <form className="stack" onSubmit={submit}>
@@ -153,7 +154,7 @@ function ImportWizard({ products, onDone }: { products: Product[]; onDone: () =>
   const review = useMemo(() => reviewInventory(source?.rows ?? [], mapping, selected, products), [source, mapping, selected, products]);
   const shownReview = step === 4 ? reviewed : review;
   const valid = shownReview.filter((r) => (r.status === "new" || r.status === "update") && !omitted.has(r.index));
-  const missingColumns = ["code", "name", "price"].some((field) => mapping[field as ProductField] === undefined);
+  const missingColumns = ["code", "name"].some((field) => mapping[field as ProductField] === undefined);
   const mapped = Object.values(mapping).filter((index) => index !== undefined);
   const repeatedColumn = new Set(mapped).size !== mapped.length;
 
@@ -186,14 +187,14 @@ function ImportWizard({ products, onDone }: { products: Product[]; onDone: () =>
         } catch (error) { setError(accessError(error)); } finally { setBusy(false); }
       }} /></Field></>}
     {step === 1 && source && <>
-      <p>Relaciona cada columna. Para el precio usa USD con punto o coma decimal y para vencimientos usa AAAA-MM-DD.</p>
+      <p>Relaciona cada columna. Si tienes precios, usa USD con punto o coma decimal y para vencimientos usa AAAA-MM-DD.</p>
       <div className="form-grid">{productFields.map(([field, label]) => <Field key={field} label={label}>
         <select value={mapping[field] ?? ""} onChange={(e) => setMapping({ ...mapping, [field]: e.target.value === "" ? undefined : Number(e.target.value) })}>
           <option value="">Sin asignar</option>{source.headers.map((head, i) => <option key={i} value={i}>{i + 1}. {head || "Sin encabezado"}</option>)}
         </select></Field>)}</div>
       <div className="table-scroll"><table><thead><tr>{source.headers.map((head, i) => <th key={i}>{head || "—"}</th>)}</tr></thead>
         <tbody>{source.rows.slice(0, 3).map((row, i) => <tr key={i}>{source.headers.map((_, j) => <td key={j}>{row[j]}</td>)}</tr>)}</tbody></table></div>
-      {(missingColumns || repeatedColumn) && <Notice>Asigna código, nombre y precio a columnas distintas. Cada columna se usa una sola vez.</Notice>}
+      {(missingColumns || repeatedColumn) && <Notice>Asigna código y nombre a columnas distintas. Cada columna se usa una sola vez.</Notice>}
     </>}
     {step === 2 && <>
       <p>Se identifica cada medicamento por su código interno. Los códigos de barras en conflicto se omiten.</p>
@@ -201,6 +202,7 @@ function ImportWizard({ products, onDone }: { products: Product[]; onDone: () =>
         <label key={field} className="checkline"><input type="checkbox" checked={selected.has(field)} onChange={(e) => {
           const next = new Set(selected); if (e.target.checked) next.add(field); else next.delete(field); setSelected(next);
         }} /> Actualizar {label.toLowerCase()}</label>)}</div>
+      <p>Los productos nuevos sin precio quedan pendientes y fuera de caja hasta que registres un precio en USD.</p>
       <Notice>Las existencias importadas solo se aplican a productos nuevos. Las diferencias de productos existentes requieren un ajuste de inventario auditado.</Notice>
     </>}
     {(step === 2 || step === 3) && <div className="table-scroll tall"><table>

@@ -288,7 +288,7 @@ export function useOperation() {
       if (stored.sales.some(({ payload }) => payload.id === sale.payload.id)) return;
       if (sale.payload.grant_id !== stored.grant.id) throw new Error("El catálogo se actualizó. Revisa los importes y vuelve a confirmar.");
       for (const item of sale.payload.items) {
-        const product = stored.grant.catalog.products.find((p) => p.id === item.product_id && p.active);
+        const product = stored.grant.catalog.products.find((p) => p.id === item.product_id && p.active && p.price !== null && p.price_id === item.price_id);
         const reserved = stored.sales.filter(({ receipt }) => receipt.local).flatMap(({ payload }) => payload.items)
           .filter((p) => p.product_id === item.product_id).reduce((sum, p) => sum + p.quantity, 0);
         if (!product || product.stock - reserved < item.quantity) throw new Error("El saldo local cambió. Revisa las cantidades.");

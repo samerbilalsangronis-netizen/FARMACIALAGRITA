@@ -45,7 +45,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
         deductions.set(item.product_id, (deductions.get(item.product_id) ?? 0) + item.quantity);
       }
     }
-    return (snapshot?.products ?? []).filter((p) => p.active)
+    return (snapshot?.products ?? []).filter((p): p is Product & { price: number; price_id: string } => p.active && p.price !== null && p.price_id !== null)
       .map((p) => ({ ...p, stock: p.stock - (deductions.get(p.id) ?? 0) }));
   }, [local, snapshot]);
   const search = normalize(query.trim());

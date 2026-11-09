@@ -5,7 +5,7 @@ export type Currency = "USD" | "VES" | "COP";
 export type Profile = { id: string; username: string; role: "admin" | "cashier" };
 export type Product = {
   id: string; code: string; barcode: string | null; name: string; ingredient: string; strength: string;
-  presentation: string; category: string; laboratory: string; price: number; price_id: string;
+  presentation: string; category: string; laboratory: string; price: number | null; price_id: string | null;
   stock: number; min_stock: number; batch: string | null; expiration: string | null; active: boolean; updated_at: string;
 };
 export type Settings = {
