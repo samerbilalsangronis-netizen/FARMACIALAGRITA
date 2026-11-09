@@ -151,17 +151,36 @@ td .pill{white-space:nowrap}
 .payment-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:5px;align-items:end}
 .payment-row .field>span{font-size:11px}
 .payment-row input,.payment-row select{padding-inline:5px}
-.customer-box{display:grid;gap:11px;padding:11px;border:1px solid var(--line);border-radius:10px}
+.customer-box{display:grid;gap:12px;padding:13px;border:1px solid var(--line);border-radius:12px;background:#f7fbfa}
+.customer-box .section-title{margin:0}
+.customer-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.customer-heading svg{flex:none;color:var(--green-deep)}
+.customer-heading p{overflow-wrap:anywhere}
+.customer-results{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:8px;background:white}
+.customer-results li+li{border-top:1px solid var(--line)}
+.customer-results button{width:100%;justify-content:space-between;text-align:left;overflow-wrap:anywhere}
 .chart-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px}
 .chart-track{height:8px;border-radius:999px;background:#edf3ef}
 .chart-track>span{display:block;border-radius:999px;background:#24876b;height:100%}
 .receipt-overlay{position:fixed;inset:0;background:#132c23a8;z-index:10;display:grid;align-items:center;justify-items:center;padding:15px}
-.receipt-dialog{max-height:94dvh;overflow:auto;background:white;border-radius:14px;width:min(100%,550px);padding:17px;display:grid;gap:12px}
-.receipt-tools{display:flex;justify-content:space-between;align-items:center}
-.receipt-paper{border:1px dashed #c4d8cb;padding:17px;display:grid;gap:8px;overflow-wrap:anywhere}
-.receipt-paper small{display:block}
-.receipt-warning{font-weight:750;font-size:12px}
-.receipt-lines>div{display:flex;justify-content:space-between;gap:7px;margin:6px 0}
+.receipt-dialog{max-height:94dvh;overflow:hidden;background:white;border-radius:14px;width:min(100%,550px);padding:17px;display:flex;flex-direction:column;gap:12px}
+.receipt-tools{display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.receipt-paper{border:1px solid #cfe2e9;border-top:4px solid #00738c;border-radius:11px;padding:19px;display:grid;gap:12px;overflow:auto;min-height:0;overflow-wrap:anywhere;color:#173354}
+.receipt-paper small{display:block;color:#4d6377}
+.receipt-header{text-align:center;line-height:1.4}
+.receipt-header img{display:block;width:min(100%,230px);height:auto;margin:0 auto 5px}
+.receipt-header h2{margin:0;font-size:1rem}
+.receipt-header p{margin:2px 0;font-size:.85em}
+.receipt-warning{margin:0;padding:8px;text-align:center;border:1px solid #d4e8ee;background:#eaf6fa;font-weight:750;font-size:.76em}
+.receipt-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin:0;padding:0 0 10px;border-bottom:1px solid #d4e8ee}
+.receipt-meta dt{font-size:.76em;color:#4d6377}.receipt-meta dd{margin:2px 0 0;font-weight:650}
+.receipt-lines h3{font-size:.85em;margin:0 0 5px;color:#102e61}
+.receipt-lines>div,.receipt-totals>div{display:flex;justify-content:space-between;gap:8px;padding:4px 0}
+.receipt-lines>div+div{border-top:1px solid #e6eef2}
+.receipt-lines strong,.receipt-total strong{white-space:nowrap}
+.receipt-total{background:#eaf6fa;color:#102e61}
+.receipt-footer{border-top:1px dashed #aac5d1;padding-top:8px;font-size:.81em}
+.receipt-footer p{margin:0 0 3px}
 .mobile-only,.sidebar-backdrop{display:none}
 .inline-setting{padding-block:6px;border-bottom:1px solid #e6eee9}
 .inline-setting strong{min-width:100px}
@@ -177,8 +196,14 @@ td .pill{white-space:nowrap}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 @media print{
   body{background:white;color:black}body *{visibility:hidden}#print-receipt,#print-receipt *{visibility:visible}
-  #print-receipt{position:absolute;top:0;left:0;display:block;border:0;padding:3mm;font-size:10pt;background:white;color:black}
-  #print-receipt.print-58{width:56mm}#print-receipt.print-80{width:78mm}#print-receipt.print-a4{width:185mm}
+  #print-receipt{position:absolute;top:0;left:0;display:block;overflow:visible;border:0;padding:3mm;font-size:10pt;background:white;color:black}
+  #print-receipt.print-58{width:56mm;font-size:9pt}#print-receipt.print-80{width:78mm}#print-receipt.print-a4{width:185mm}
+  .receipt-header img{width:100%;max-width:56mm}
+  .receipt-meta,.receipt-lines,.receipt-totals,.receipt-total,.receipt-footer{margin-top:2mm}
+  .receipt-warning,.receipt-total{background:white;border:1px solid #777}
+  .receipt-lines>div,.receipt-header,.receipt-meta,.receipt-total{break-inside:avoid}
+  .print-58 .receipt-meta{grid-template-columns:1fr;gap:1mm}
+  .print-58 .receipt-total{padding:2mm}
   .receipt-overlay,.receipt-dialog{position:static;display:block;padding:0;overflow:visible;max-height:none}
   .receipt-tools,.workspace,.sidebar{display:none}.receipt-paper p{margin:3px 0}
   @page{margin:0}

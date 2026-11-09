@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Catalog, Grant, Profile, QueuedSale, Receipt } from "./domain";
+import type { Catalog, Customer, Grant, Profile, QueuedSale, Receipt } from "./domain";
 import { adjustedNow, enroll, expired, hasVault, persist, unlock, type Vault, type VaultSession } from "./vault";
 import { rpc, signIn, supabase } from "./supabase";
 
@@ -13,6 +13,7 @@ export function useOperation() {
   const [local, setLocal] = useState<Vault | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [connection, setConnection] = useState<Connection>("offline");
+  const [remoteCustomers, setRemoteCustomers] = useState<Customer[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [prepared, setPrepared] = useState(false);
   const [workerReady, setWorkerReady] = useState(false);
@@ -36,11 +37,12 @@ export function useOperation() {
     let hasMore = false;
     for (let offset = 0; offset < limit; offset += 500) {
       const { data, error } = await supabase().from("sales")
-        .select("id,occurred_at,cashier_name,customer_id,customer_name,total,discount,fiscal_status,reconciliation,sale_items(product_id,name,quantity,unit_price),sale_payments(currency,method,amount,change_amount,usd,rate),fiscal_transfers(invoice,fiscal_date,note)")
+        .select("id,occurred_at,cashier_name,customer_id,customer_name,customer:customers(document),total,discount,fiscal_status,reconciliation,sale_items(product_id,name,quantity,unit_price),sale_payments(currency,method,amount,change_amount,usd,rate),fiscal_transfers(invoice,fiscal_date,note)")
         .order("occurred_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + 500);
       if (error) throw new Error(error.message);
       if (!isCurrent()) return;
-      rows.push(...data.slice(0, 500) as unknown as Receipt[]);
+      const sales = data.slice(0, 500) as unknown as (Receipt & { customer?: { document: string } | null })[];
+      rows.push(...sales.map(({ customer, ...sale }) => ({ ...sale, customer_document: customer?.document })));
       hasMore = data.length > 500;
       if (!hasMore) break;
     }
@@ -70,6 +72,62 @@ export function useOperation() {
     setLocal(session.current.vault);
   }
 
+
+  const refreshCustomers = useCallback(async (isCurrent: () => boolean) => {
+    const rows: Customer[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await supabase().from("customers").select("id,name,document,phone")
+        .order("id").range(offset, offset + 499);
+      if (error) throw new Error(error.message);
+      if (!isCurrent()) return;
+      rows.push(...data);
+      if (data.length < 500) break;
+    }
+    await serialize(async () => {
+      if (!isCurrent()) return;
+      const stored = session.current?.vault;
+      if (stored && JSON.stringify(stored.customers) !== JSON.stringify(rows)) {
+        await updateVault({ ...stored, customers: rows });
+      }
+      setRemoteCustomers(rows);
+    });
+  }, [serialize]);
+
+  const syncCustomers = useCallback(async (ownerId: string, isCurrent: () => boolean) => {
+    let failure = "";
+    const pending = session.current?.vault.pendingCustomers ?? [];
+    for (const customer of pending) {
+      if (!isCurrent() || !navigator.onLine) break;
+      try {
+        // A second device may have already registered this document for the same operator.
+        const { data, error } = await supabase().from("customers").select("id,name,document,phone")
+          .eq("owner_id", ownerId).eq("document", customer.document).maybeSingle();
+        if (error) throw new Error(error.message);
+        const saved: Customer = data ?? {
+          ...customer,
+          id: await rpc<string>("save_customer", { data: customer }),
+        };
+        await serialize(async () => {
+          const latest = session.current?.vault;
+          if (!latest || !isCurrent()) return;
+          const sales = latest.sales.map((sale) => sale.payload.customer_id === customer.id ? {
+            payload: { ...sale.payload, customer_id: saved.id },
+            receipt: { ...sale.receipt, customer_id: saved.id, customer_name: saved.name, customer_document: saved.document },
+          } : sale);
+          await updateVault({
+            ...latest, sales,
+            customers: [...(latest.customers ?? []).filter((row) => row.id !== saved.id), saved],
+            pendingCustomers: latest.pendingCustomers?.filter((row) => row.id !== customer.id),
+            customerAliases: { ...latest.customerAliases, [customer.id]: saved.id },
+          });
+        });
+      } catch (error) {
+        failure ||= accessError(error);
+      }
+    }
+    return failure;
+  }, [serialize]);
+
   const sync = useCallback((renew = false): Promise<void> => {
     if (syncInFlight.current) {
       return renew ? syncInFlight.current.then(() => sync(renew)) : syncInFlight.current;
@@ -97,12 +155,14 @@ export function useOperation() {
       setSyncProblem("");
       setConnection("syncing");
       try {
+        let problem = await syncCustomers(user.id, sameSession);
         const stored = session.current?.vault;
         if (stored) {
           const pending = stored.sales.filter(({ receipt }) => receipt.local);
           const results = new Map<string, Receipt>();
           for (const sale of pending) {
             if (!sameSession() || !navigator.onLine) break;
+            if (stored.pendingCustomers?.some((customer) => customer.id === sale.payload.customer_id)) continue;
             try {
               const result = await rpc<{ id: string; reconciliation: boolean }>("confirm_sale", { data: sale.payload });
               results.set(sale.payload.id, { ...sale.receipt, local: undefined, error: undefined, reconciliation: result.reconciliation });
@@ -125,20 +185,21 @@ export function useOperation() {
               await updateVault({
                 ...latest, grant, clockOffset: Date.parse(grant.issued_at) - Date.now(),
                 sales: [...sales.filter((sale) => sale.receipt.local), ...sales.filter((sale) => !sale.receipt.local).slice(-100)],
-                lastSync: failure ? latest.lastSync : new Date().toISOString(),
+                lastSync: failure || problem ? latest.lastSync : new Date().toISOString(),
               });
               currentCatalog = grant.catalog;
             });
           }
-          if (!sameSession()) return;
-          if (failure) setSyncProblem(failure.error ?? "Hay ventas pendientes de revisión.");
-          setConnection(!navigator.onLine ? "offline" : failure ? "error" : "online");
-        } else {
-          setConnection("online");
+          if (failure) problem = failure.error ?? "Hay ventas pendientes de revisión.";
+          else if (problem) problem = "Hay clientes pendientes de sincronizar. " + problem;
         }
-        if (!sameSession() || !navigator.onLine) return;
+        if (!sameSession()) return;
+        if (!navigator.onLine) { setConnection("offline"); return; }
         setCatalog(currentCatalog);
-        await refreshHistory(historyLimit.current, sameSession);
+        await Promise.all([refreshHistory(historyLimit.current, sameSession), refreshCustomers(sameSession)]);
+        if (!sameSession()) return;
+        setSyncProblem(problem);
+        setConnection(!navigator.onLine ? "offline" : problem ? "error" : "online");
       } catch (error) {
         if (!sameSession()) return;
         setSyncProblem(accessError(error));
@@ -148,7 +209,7 @@ export function useOperation() {
     const running = operation.finally(() => { syncInFlight.current = null; });
     syncInFlight.current = running;
     return running;
-  }, [refreshHistory, serialize]);
+  }, [refreshHistory, refreshCustomers, serialize, syncCustomers]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
@@ -195,7 +256,8 @@ export function useOperation() {
     setPrepared(ready);
     setConnection("online");
     if (session.current) await sync(true);
-    else await refreshHistory().catch((error) => setSyncProblem(accessError(error)));
+    else await Promise.all([refreshHistory(), refreshCustomers(() => active.current === p && authenticated.current)])
+      .catch((error) => setSyncProblem(accessError(error)));
   }
 
   async function prepare(passphrase: string) {
@@ -234,9 +296,50 @@ export function useOperation() {
       if (stored.sales.filter(({ receipt }) => receipt.local).length >= 1000) {
         throw new Error("Sincroniza las ventas pendientes antes de seguir registrando.");
       }
-      await updateVault({ ...stored, sales: [...stored.sales, sale] });
+      const customerId = sale.payload.customer_id;
+      const saved = customerId && stored.customers?.find((row) => row.id === stored.customerAliases?.[customerId]);
+      const queued = saved ? {
+        payload: { ...sale.payload, customer_id: saved.id },
+        receipt: { ...sale.receipt, customer_id: saved.id, customer_name: saved.name, customer_document: saved.document },
+      } : sale;
+      await updateVault({ ...stored, sales: [...stored.sales, queued] });
     });
-    void sync();
+    void (syncInFlight.current ? syncInFlight.current.then(() => sync()) : sync());
+  }
+
+  async function registerCustomer(form: FormData) {
+    const name = String(form.get("name") ?? "").trim();
+    const document = String(form.get("document") ?? "").trim().toUpperCase();
+    const phone = String(form.get("phone") ?? "").trim();
+    const notes = String(form.get("notes") ?? "").trim();
+    if (!name || name.length > 160 || !document || document.length > 40 || phone.length > 40 || notes.length > 400) {
+      throw new Error("Revisa el nombre, el documento y los datos de contacto.");
+    }
+    const customer = await serialize(async () => {
+      const user = active.current;
+      if (!user) throw new Error("Inicia sesión para registrar clientes.");
+      const stored = session.current?.vault;
+      const existing = [...(stored?.pendingCustomers ?? []), ...(stored?.customers ?? remoteCustomers)]
+        .find((row) => row.document === document);
+      if (existing) return existing;
+      const data = { id: crypto.randomUUID(), name, document, phone, notes };
+      if (stored && !expired(stored)) {
+        const pending = stored.pendingCustomers ?? [];
+        if (pending.length >= 1000) throw new Error("Sincroniza los clientes pendientes antes de seguir registrando.");
+        await updateVault({ ...stored, pendingCustomers: [...pending, data] });
+        return data;
+      }
+      if (!authenticated.current || !navigator.onLine) {
+        throw new Error("Prepara o renueva el acceso del dispositivo para registrar clientes sin internet.");
+      }
+      const id = await rpc<string>("save_customer", { data });
+      const saved = { ...data, id };
+      setRemoteCustomers((rows) => [...rows.filter((row) => row.id !== id), saved]);
+      if (stored) await updateVault({ ...stored, customers: [...(stored.customers ?? []).filter((row) => row.id !== id), saved] });
+      return saved;
+    });
+    void (syncInFlight.current ? syncInFlight.current.then(() => sync()) : sync());
+    return customer;
   }
 
   const lock = useCallback(async () => {
@@ -244,7 +347,7 @@ export function useOperation() {
       session.current = null;
       active.current = null;
       authenticated.current = false;
-      setProfile(null); setLocal(null); setCatalog(null); setReceipts([]); setSyncProblem("");
+      setProfile(null); setLocal(null); setCatalog(null); setRemoteCustomers([]); setReceipts([]); setSyncProblem("");
       historyLimit.current = 500; setHistoryTruncated(false); setPrepared(false); setConnection("offline");
       try { await supabase().auth.signOut({ scope: "local" }); } catch { /* Session storage is cleared below. */ }
       for (const key of Object.keys(window.sessionStorage)) {
@@ -271,12 +374,15 @@ export function useOperation() {
   }, [profile, lock]);
 
   const wallClock = () => local ? adjustedNow(local) : Date.now();
+  const customers = [...(local?.customers ?? remoteCustomers), ...(local?.pendingCustomers ?? [])]
+    .sort((left, right) => left.name.localeCompare(right.name, "es"));
   const merged = new Map(receipts.map((r) => [r.id, r]));
   for (const entry of local?.sales ?? []) if (!merged.has(entry.receipt.id)) merged.set(entry.receipt.id, entry.receipt);
   return {
     profile, catalog, local, connection, prepared, workerReady, syncProblem, historyTruncated, needsReconnect: Boolean(profile && !authenticated.current),
     receipts: [...merged.values()].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)),
-    login, prepare, queue, lock, sync, wallClock, loadMoreHistory,
+    customers,
+    registerCustomer, login, prepare, queue, lock, sync, wallClock, loadMoreHistory,
   };
 }
 export type Operation = ReturnType<typeof useOperation>;

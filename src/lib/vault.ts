@@ -1,7 +1,7 @@
 import Dexie, { type Table } from "dexie";
-import type { Grant, Profile, QueuedSale } from "./domain";
+import type { Customer, Grant, Profile, QueuedSale } from "./domain";
 
-export type Vault = { profile: Profile; grant: Grant; sales: QueuedSale[]; clockOffset: number; lastActivity: number; lastSync: string | null };
+export type Vault = { profile: Profile; grant: Grant; sales: QueuedSale[]; customers?: Customer[]; pendingCustomers?: Customer[]; customerAliases?: Record<string, string>; clockOffset: number; lastActivity: number; lastSync: string | null };
 type Envelope = { id: string; salt: Uint8Array<ArrayBuffer>; iv: Uint8Array<ArrayBuffer>; cipher: ArrayBuffer; revision: number };
 export type VaultSession = { key: CryptoKey; row: Envelope; vault: Vault };
 

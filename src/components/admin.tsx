@@ -112,22 +112,16 @@ export function Settings({ op }: { op: Operation }) {
 
 export function Customers({ op }: { op: Operation }) {
   const [query, setQuery] = useState("");
-  const [rows, setRows] = useState<Customer[] | null>(null);
   const [selected, setSelected] = useState<Customer | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
-  const load = async () => {
-    const { data, error } = await supabase().from("customers").select("id,name,document,phone,notes").order("name").limit(500);
-    if (error) throw new Error(error.message);
-    setRows(data as Customer[]);
-  };
   const purchases = selected ? op.receipts.filter((receipt) => receipt.customer_id === selected.id) : [];
-  const matches = rows?.filter((c) => normalize(c.name + " " + c.document).includes(normalize(query.trim())));
+  const matches = op.customers.filter((c) => normalize(c.name + " " + c.document).includes(normalize(query.trim())));
   return <>
     <Heading label="OPERACIÓN" title="Clientes">Registra los datos básicos de un cliente cuando la venta lo requiera.</Heading>
     {error && <Notice>{error}</Notice>}{success && <Notice success>{success}</Notice>}
-    {op.connection === "offline" && <Notice>La consulta y el registro de clientes requieren conexión.</Notice>}
+    {op.connection === "offline" && <Notice>Puedes consultar y registrar clientes en un dispositivo preparado. Los registros pendientes se envían al reconectar.</Notice>}
     <section className="card stack"><h2>Registrar cliente</h2>
       <form className="stack" onSubmit={async (event) => {
         event.preventDefault();
@@ -135,8 +129,8 @@ export function Customers({ op }: { op: Operation }) {
         const form = event.currentTarget;
         setBusy(true); setError(""); setSuccess("");
         try {
-          await rpc("save_customer", { data: Object.fromEntries(new FormData(form)) });
-          form.reset(); setSuccess("Cliente guardado."); await load();
+          await op.registerCustomer(new FormData(form));
+          form.reset(); setSuccess("Cliente guardado.");
         } catch (error) { setError(accessError(error)); } finally { setBusy(false); }
       }}>
         <div className="form-grid">
@@ -145,15 +139,15 @@ export function Customers({ op }: { op: Operation }) {
           <Field label="Teléfono (opcional)"><input name="phone" type="tel" maxLength={40} /></Field>
           <Field label="Observaciones (opcional)"><input name="notes" maxLength={400} /></Field>
         </div>
-        <div><Button type="submit" disabled={busy || op.connection === "offline"}>Guardar cliente</Button></div>
+        <div><Button type="submit" disabled={busy || (op.connection === "offline" && !op.local)}>Guardar cliente</Button></div>
       </form>
     </section>
     <section className="card stack"><div className="section-title"><h2>Clientes registrados</h2>
-      <Button variant="outline" disabled={op.connection === "offline"} onClick={() => void load().catch((error) => setError(accessError(error)))}>{rows ? "Actualizar" : "Cargar clientes"}</Button></div>
-      {rows && <><Field label="Buscar por nombre o cédula"><input value={query} onChange={(e) => setQuery(e.target.value)} /></Field>
+      <Button variant="outline" disabled={op.connection === "offline"} onClick={() => void op.sync()}>Actualizar</Button></div>
+      <Field label="Buscar por nombre o cédula"><input value={query} onChange={(e) => setQuery(e.target.value)} /></Field>
         {matches?.length ? <div className="table-scroll"><table><thead><tr><th>Nombre</th><th>Documento</th><th>Teléfono</th><th></th></tr></thead>
           <tbody>{matches.map((c) => <tr key={c.id}><td>{c.name}</td><td>{c.document}</td><td>{c.phone}</td><td><Button variant="ghost" onClick={() => setSelected(c)}>Ver historial</Button></td></tr>)}</tbody></table></div>
-          : <Empty>Sin clientes para esta búsqueda.</Empty>}</>}
+          : <Empty>Sin clientes para esta búsqueda.</Empty>}
       {selected && <div className="stack"><h3>Compras de {selected.name}</h3>
         {purchases.length ? purchases.map((receipt) => <div className="list-line" key={receipt.id}>
           <span>{displayDate(receipt.occurred_at)} · {receipt.sale_items.map((item) => item.name).join(", ")}</span><strong>{money(receipt.total)}</strong>

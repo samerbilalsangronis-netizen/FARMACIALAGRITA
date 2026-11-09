@@ -17,8 +17,11 @@ const catalog = {
     presentation: "Caja", strength: "500 mg", active: true, min_stock: 1 }],
 };
 
-test("guarda una venta offline, reabre la PWA y sincroniza la misma operación una sola vez", async ({ context, page }) => {
+test("registra cliente y venta offline, reabre la PWA y sincroniza una sola vez", async ({ context, page }, testInfo) => {
   const accepted = new Map<string, Record<string, unknown>>();
+  const registeredCustomer = { id: "66188d88-40db-4a94-8d5c-4066a55a48b1", name: "Cliente de prueba", document: "V-12345678", phone: "" };
+  const cachedCustomer = { id: "42abbec2-8ffc-4ae8-b128-4edb8d0a24ea", name: "Cliente existente", document: "V-87654321", phone: "" };
+  let customerSaves = 0;
   let sendCount = 0;
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -36,9 +39,21 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
       id: crypto.randomUUID(), cashier_id: userId, issued_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 86400000).toISOString(), rate_hours: 24, stale_policy: "confirm", catalog,
     };
+    if (path === "/rest/v1/customers") {
+      const requestedDocument = new URL(request.url()).searchParams.get("document");
+      result = requestedDocument ? [] : [cachedCustomer, ...(customerSaves ? [registeredCustomer] : [])];
+    }
+    if (path.endsWith("/rpc/save_customer")) {
+      const { data } = request.postDataJSON();
+      expect(data).toMatchObject({ name: registeredCustomer.name, document: registeredCustomer.document });
+      customerSaves++;
+      result = registeredCustomer.id;
+    }
     if (path.endsWith("/rpc/confirm_sale")) {
+      expect(customerSaves).toBe(1);
       sendCount++;
       const { data } = request.postDataJSON();
+      expect(data.customer_id).toBe(registeredCustomer.id);
       const old = accepted.get(data.id);
       expect(!old || JSON.stringify(old) === JSON.stringify(data)).toBe(true);
       accepted.set(data.id, data);
@@ -82,10 +97,28 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
 
   await context.setOffline(true);
   await expect(confirmSale).toBeEnabled();
+  await page.getByRole("button", { name: "Seleccionar", exact: true }).click();
+  await page.getByLabel("Buscar cliente por nombre o documento").fill(cachedCustomer.document);
+  await expect(page.getByRole("button", { name: /Cliente existente/ })).toBeVisible();
+  await page.getByRole("button", { name: "Registrar cliente", exact: true }).click();
+  await page.getByLabel("Nombre completo").fill(registeredCustomer.name);
+  await page.getByLabel("Cédula o documento").fill(registeredCustomer.document.toLowerCase());
+  await page.getByRole("button", { name: "Guardar y asignar cliente" }).click();
+  await expect(page.getByText(registeredCustomer.name + " · " + registeredCustomer.document)).toBeVisible();
   await confirmSale.click();
   await expect(page.getByText("COMPROBANTE INTERNO DE CONTROL — NO ES FACTURA FISCAL")).toBeVisible();
   await expect(page.getByText("1 venta pendiente de sincronizar", { exact: false })).toBeVisible();
+  const receipt = page.getByRole("dialog", { name: "Comprobante de venta" });
+  await expect(receipt.getByText("Documento " + registeredCustomer.document)).toBeVisible();
+  await expect(receipt.getByRole("img", { name: "Logo de FarmaWorld" })).toBeVisible();
+  await receipt.screenshot({ path: testInfo.outputPath("comprobante.png") });
+  const downloading = page.waitForEvent("download");
+  await receipt.getByRole("button", { name: "PDF", exact: true }).click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toMatch(/^comprobante-.*\.pdf$/);
+  await download.saveAs(testInfo.outputPath("comprobante.pdf"));
   expect(accepted.size).toBe(0);
+  expect(customerSaves).toBe(0);
 
   await page.close();
   const reopened = await context.newPage();
@@ -98,6 +131,9 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   await expect(reopened.getByText("1 venta pendiente de sincronizar", { exact: false })).toBeVisible();
   await reopened.getByRole("button", { name: "Historial de ventas" }).click();
   await expect(reopened.getByText("Guardada en el dispositivo", { exact: true })).toBeVisible();
+  await reopened.getByRole("button", { name: "Clientes", exact: true }).click();
+  await expect(reopened.getByRole("cell", { name: registeredCustomer.document })).toBeVisible();
+  await reopened.getByRole("button", { name: "Historial de ventas", exact: true }).click();
 
   await context.setOffline(false);
   await reopened.getByRole("button", { name: "Reconectar", exact: true }).click();
@@ -106,6 +142,7 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   await expect(reopened.getByRole("table").getByText("Sincronizada", { exact: true })).toBeVisible();
   await reopened.getByRole("button", { name: "Actualizar y sincronizar" }).click();
   await expect(reopened.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
+  expect(customerSaves).toBe(1);
   expect(sendCount).toBe(1);
   expect(accepted.size).toBe(1);
   expect([...accepted.values()][0].payments).toEqual([

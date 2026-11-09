@@ -15,48 +15,104 @@ const syncLabel = (receipt: Receipt) => receipt.local === "error" ? "Error de si
 export function ReceiptView({ receipt, catalog, close }: { receipt: Receipt; catalog: Catalog | null; close: () => void }) {
   const [width, setWidth] = useState("80");
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
   const paymentName = (method: string) => catalog?.methods.find((m) => m.code === method)?.label ?? method;
+  const settings = catalog?.settings;
+  const pharmacy = pharmacyDisplayName(settings?.pharmacy_name);
+  const number = receipt.id.slice(0, 8).toUpperCase();
+  const issued = displayDate(receipt.occurred_at);
+  const customer = receipt.customer_name ?? "Sin identificar";
+  const fiscal = fiscalLabels[receipt.fiscal_status];
+  const subtotal = new decimal(receipt.total).plus(receipt.discount ?? 0).toFixed(2);
+  const lineTotal = (item: Receipt["sale_items"][number]) =>
+    money(new decimal(item.unit_price).times(item.quantity).toFixed(2));
+
+  async function savePdf() {
+    setError(""); setExporting(true);
+    try {
+      const [{ createReportPdf }, logo] = await Promise.all([import("@/lib/report-pdf"), fetch(pharmacyBrand.logo)]);
+      if (!logo.ok) throw new Error("El logo aún no está disponible en este dispositivo. Actualiza la app con internet.");
+      const pdf = createReportPdf({
+        title: "Comprobante interno", summaryTitle: "Resumen de la venta", pharmacy,
+        logo: new Uint8Array(await logo.arrayBuffer()), rif: pharmacyBrand.rif,
+        address: settings?.address, phone: settings?.phone,
+        period: "Operación " + number + "  ·  " + issued, issuedAt: displayDate(new Date().toISOString()),
+        coverage: disclaimer,
+        indicators: [
+          { label: "TOTAL", value: money(receipt.total) },
+          { label: "SUBTOTAL", value: money(subtotal) },
+          { label: "DESCUENTO", value: money(receipt.discount ?? 0) },
+        ],
+        sections: [
+          { title: "Identificación y estado", columns: [{ label: "Campo", width: 24 }, { label: "Detalle", width: 68 },
+            { label: "Campo", width: 25 }, { label: "Detalle", width: 61 }],
+            rows: [["Operación", receipt.id, "Atendido por", receipt.cashier_name],
+              ["Cliente", customer, "Documento", receipt.customer_document ?? "-"],
+              ["Registro", syncLabel(receipt), "Estado fiscal", fiscal],
+              ...(receipt.fiscal_transfers ? [["Ref. fiscal", receipt.fiscal_transfers.invoice, "Fecha fiscal", receipt.fiscal_transfers.fiscal_date]] : [])] },
+          { title: "Productos", columns: [{ label: "Producto", width: 76 }, { label: "Cant.", width: 20, align: "right" },
+            { label: "Precio unitario", width: 41, align: "right" }, { label: "Importe", width: 41, align: "right" }],
+            rows: receipt.sale_items.map((item) => [item.name, String(item.quantity), money(item.unit_price), lineTotal(item)]) },
+          { title: "Detalle del cobro", columns: [{ label: "Método", width: 54 },
+            { label: "Recibido", width: 40, align: "right" }, { label: "Cambio", width: 40, align: "right" },
+            { label: "Tasa por USD", width: 44, align: "right" }],
+            rows: receipt.sale_payments.map((line) => [paymentName(line.method), money(line.amount, line.currency),
+              money(line.change_amount, line.currency), line.currency === "USD" ? "-" : money(line.rate, line.currency)]) },
+        ],
+      });
+      pdf.save("comprobante-" + number.toLowerCase() + ".pdf");
+    } catch (error) { setError(accessError(error)); }
+    finally { setExporting(false); }
+  }
+
   return <div className="receipt-overlay" onClick={close}>
     <section className="receipt-dialog" role="dialog" aria-modal="true" aria-label="Comprobante de venta" onClick={(event) => event.stopPropagation()}>
       <div className="receipt-tools"><h2>Comprobante interno</h2><Button aria-label="Cerrar comprobante" variant="ghost" className="icon-button" onClick={close}><X size={20} /></Button></div>
       {error && <Notice>{error}</Notice>}
       <article id="print-receipt" className={"receipt-paper print-" + width}>
-        <h2>{pharmacyDisplayName(catalog?.settings.pharmacy_name)}</h2>
-        <p>{catalog?.settings.address} {catalog?.settings.phone}</p>
+        <header className="receipt-header">
+          <img src={pharmacyBrand.logo} alt="Logo de FarmaWorld" width={1280} height={539} />
+          <h2>{pharmacy}</h2>
+          <p>RIF {pharmacyBrand.rif}</p>
+          {settings?.address && <p>{settings.address}</p>}
+          {settings?.phone && <p>{settings.phone}</p>}
+        </header>
         <p className="receipt-warning">{disclaimer}</p>
-        <small>Operación {receipt.id}</small>
-        <p>{displayDate(receipt.occurred_at)} · {receipt.cashier_name}</p>
-        {receipt.customer_name && <p>Cliente {receipt.customer_name}</p>}
-        <div className="receipt-lines">{receipt.sale_items.map((item) =>
-          <div key={item.product_id}><span>{item.quantity} × {item.name}<small>{money(item.unit_price)} c/u</small></span>
-            <strong>{money(new decimal(item.unit_price).times(item.quantity).toFixed(2))}</strong></div>)}</div>
-        {Number(receipt.discount ?? 0) > 0 && <p>Descuento {money(receipt.discount ?? 0)}</p>}
+        <dl className="receipt-meta">
+          <div><dt>Operación</dt><dd>{number}</dd></div>
+          <div><dt>Fecha y hora</dt><dd>{issued}</dd></div>
+          <div><dt>Atendido por</dt><dd>{receipt.cashier_name}</dd></div>
+          <div><dt>Cliente</dt><dd>{customer}{receipt.customer_document && <small>Documento {receipt.customer_document}</small>}</dd></div>
+        </dl>
+        <div className="receipt-lines">
+          <h3>Productos</h3>
+          {receipt.sale_items.map((item) => <div key={item.product_id}><span>{item.name}<small>{item.quantity} × {money(item.unit_price)}</small></span>
+            <strong>{lineTotal(item)}</strong></div>)}
+        </div>
+        <div className="receipt-totals">
+          <div><span>Subtotal</span><span>{money(subtotal)}</span></div>
+          {Number(receipt.discount ?? 0) > 0 && <div><span>Descuento</span><span>{money(receipt.discount ?? 0)}</span></div>}
+        </div>
         <div className="receipt-total"><span>Total</span><strong>{money(receipt.total)}</strong></div>
-        {receipt.sale_payments.map((line, i) => <p key={i}>{paymentName(line.method)} · {money(line.amount, line.currency)}
-          {Number(line.change_amount) > 0 && " · Cambio " + money(line.change_amount, line.currency)}
-          {line.currency !== "USD" && <small>Tasa de {line.rate} {line.currency} por USD</small>}</p>)}
-        <p>{syncLabel(receipt)} · Fiscal {fiscalLabels[receipt.fiscal_status].toLowerCase()}</p>
-        {receipt.fiscal_transfers && <p>Referencia {receipt.fiscal_transfers.invoice} · {receipt.fiscal_transfers.fiscal_date}</p>}
+        <div className="receipt-lines">
+          <h3>Detalle del cobro</h3>
+          {receipt.sale_payments.map((line, i) => <div key={i}><span>{paymentName(line.method)}
+            {Number(line.change_amount) > 0 && <small>Cambio {money(line.change_amount, line.currency)}</small>}
+            {line.currency !== "USD" && <small>Tasa {line.rate} {line.currency} por USD</small>}</span>
+            <strong>{money(line.amount, line.currency)}</strong></div>)}
+        </div>
+        <footer className="receipt-footer">
+          <p>{syncLabel(receipt)} · Fiscal {fiscal.toLowerCase()}</p>
+          {receipt.fiscal_transfers && <p>Referencia {receipt.fiscal_transfers.invoice} · {receipt.fiscal_transfers.fiscal_date}</p>}
+          <small>ID {receipt.id}</small>
+        </footer>
       </article>
       <div className="toolbar receipt-tools">
         <select aria-label="Ancho de impresión" value={width} onChange={(e) => setWidth(e.target.value)}>
           <option value="58">Térmica 58 mm</option><option value="80">Térmica 80 mm</option><option value="a4">Convencional</option>
         </select>
         <Button variant="outline" onClick={() => window.print()}><Printer size={17} /> Imprimir</Button>
-        <Button variant="outline" onClick={async () => {
-          try {
-            const rows: ExportCell[][] = [
-              [pharmacyDisplayName(catalog?.settings.pharmacy_name), disclaimer],
-              ["Identificador", receipt.id], ["Fecha", displayDate(receipt.occurred_at)],
-              ["Cajero", receipt.cashier_name], ["Cliente", receipt.customer_name], ["Estado", syncLabel(receipt)],
-              ...receipt.sale_items.map((item) => [item.name, item.quantity, money(item.unit_price), money(new decimal(item.unit_price).times(item.quantity).toFixed(2))]),
-              ["Descuento USD", money(receipt.discount ?? 0)], ["TOTAL USD", money(receipt.total)],
-              ...receipt.sale_payments.map((line) => [paymentName(line.method), money(line.amount, line.currency),
-                "Cambio " + money(line.change_amount, line.currency), "Tasa " + line.rate + " " + line.currency + " por USD"]),
-            ];
-            await exportTable("comprobante-" + receipt.id.slice(0, 8), ["Comprobante interno"], rows, "pdf");
-          } catch (error) { setError(accessError(error)); }
-        }}><ArrowDownToLine size={17} /> PDF</Button>
+        <Button variant="outline" disabled={exporting} onClick={() => void savePdf()}><ArrowDownToLine size={17} /> {exporting ? "Generando…" : "PDF"}</Button>
       </div>
     </section>
   </div>;

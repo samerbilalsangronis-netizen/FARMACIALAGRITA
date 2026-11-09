@@ -89,4 +89,17 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
   assert.equal(await rpc("(select count(*)::integer from public.products)"), 0);
   await as("", "anon");
   await assert.rejects(rpc("public.catalog()"), /permission denied/);
+
+  await db.exec("reset role");
+  const cleanup = await readFile(new URL("../supabase/limpieza_preentrega.sql", import.meta.url), "utf8");
+  await db.exec(cleanup);
+  assert.equal(await rpc("(select count(*)::integer from public.sales)"), 2);
+  await db.exec(cleanup.replace("= 'SIMULAR';", "= 'BORRAR_DATOS_DE_PRUEBA';"));
+  for (const table of ["sales", "sale_items", "sale_payments", "fiscal_transfers", "customers", "inventory_movements",
+    "inventory_imports", "products", "product_prices", "exchange_rates", "device_grants"]) {
+    assert.equal(await rpc("(select count(*)::integer from public." + table + ")"), 0, table);
+  }
+  assert.equal(await rpc("(select count(*)::integer from public.profiles)"), 3);
+  assert.equal(await rpc("(select count(*)::integer from auth.users)"), 4);
+  assert.equal(await rpc("(select count(*)::integer from public.payment_methods)"), 3);
 });

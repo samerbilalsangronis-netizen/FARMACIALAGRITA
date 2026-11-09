@@ -16,6 +16,7 @@ export type ReportPdf = {
   period: string;
   issuedAt: string;
   coverage?: string;
+  summaryTitle?: string;
   indicators: { label: string; value: string }[];
   sections: ReportSection[];
 };
@@ -140,7 +141,7 @@ export function createReportPdf(report: ReportPdf) {
   doc.setProperties({ title: report.title, subject: report.period, author: report.pharmacy });
   header(true);
   font(13, colors.forest, true);
-  doc.text("Resumen del período", left, y + 4);
+  doc.text(printable(report.summaryTitle ?? "Resumen del período"), left, y + 4);
   y += 9;
 
   const gap = 4;

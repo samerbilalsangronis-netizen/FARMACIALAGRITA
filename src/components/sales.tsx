@@ -1,10 +1,9 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
-import { Check, CircleMinus, Plus, ScanLine, Search, ShoppingCart, Trash2 } from "lucide-react";
+import { Check, CircleMinus, Plus, ScanLine, Search, ShoppingCart, Trash2, UserPlus, UserRound } from "lucide-react";
 import { amountInCurrency, currencies, currencyScale, decimal, displayDate, money, normalize, paymentValue, type Currency, type Customer, type Payment, type Product, type QueuedSale, type Receipt } from "@/lib/domain";
 import { expired } from "@/lib/vault";
 import { accessError, type Operation } from "@/lib/use-operation";
-import { rpc, supabase } from "@/lib/supabase";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
@@ -28,10 +27,15 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
   const [busy, setBusy] = useState(false);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [customerOpen, setCustomerOpen] = useState(false);
-  const [customerList, setCustomerList] = useState<Customer[]>([]);
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerCreate, setCustomerCreate] = useState(false);
+  const [savingCustomer, setSavingCustomer] = useState(false);
+  const [customerError, setCustomerError] = useState("");
   const draft = useRef<QueuedSale | null>(null);
   const submitting = useRef(false);
   const local = op.local;
+  const customerSearch = normalize(customerQuery.trim());
+  const customerMatches = op.customers.filter((row) => normalize(row.name + " " + row.document).includes(customerSearch));
   const snapshot = local?.grant.catalog ?? op.catalog;
   const products = useMemo(() => {
     const deductions = new Map<string, number>();
@@ -88,7 +92,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
   }
 
   async function confirm() {
-    if (submitting.current) return;
+    if (submitting.current || savingCustomer) return;
     setError("");
     submitting.current = true;
     setBusy(true);
@@ -109,7 +113,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
         draft.current = {
           payload: { id, occurred_at, grant_id: local.grant.id, rate_id: rate?.id ?? null, customer_id: customer?.id ?? null,
             stale_confirmed: staleConfirmed, discount: discount.toFixed(2), items: lines.map((p) => ({ product_id: p.id, price_id: p.price_id, quantity: p.quantity })), payments },
-          receipt: { id, occurred_at, cashier_name: op.profile.username, customer_id: customer?.id ?? null, customer_name: customer?.name ?? null, total: total.toFixed(2),
+          receipt: { id, occurred_at, cashier_name: op.profile.username, customer_id: customer?.id ?? null, customer_name: customer?.name ?? null, customer_document: customer?.document ?? null, total: total.toFixed(2),
             sale_items: lines.map((p) => ({ product_id: p.id, name: p.name, quantity: p.quantity, unit_price: p.price })),
             sale_payments: applied, discount: discount.toFixed(2), fiscal_status: "pending", reconciliation: false, local: "pending" },
         };
@@ -117,7 +121,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
       const sale = draft.current;
       await op.queue(sale);
       draft.current = null;
-      setCart({}); setDiscountInput("0"); setPayments([payment()]); setCustomer(null); setStaleConfirmed(false);
+      setCart({}); setDiscountInput("0"); setPayments([payment()]); setCustomer(null); setCustomerOpen(false); setCustomerCreate(false); setCustomerQuery(""); setCustomerError(""); setStaleConfirmed(false);
       onReceipt(sale.receipt);
     } catch (error) {
       if (draft.current?.payload.grant_id !== local?.grant.id || accessError(error).includes("catálogo se actualizó")) draft.current = null;
@@ -128,14 +132,13 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
     }
   }
 
-  async function showCustomers() {
-    setCustomerOpen((previous) => !previous);
-    if (customerOpen) return;
-    try {
-      const { data, error } = await supabase().from("customers").select("id,name,document,phone").order("name").limit(500);
-      if (error) throw new Error(error.message);
-      setCustomerList(data as Customer[]);
-    } catch (error) { setError(accessError(error)); }
+  function chooseCustomer(selected: Customer | null) {
+    draft.current = null;
+    setCustomer(selected);
+    setCustomerOpen(false);
+    setCustomerCreate(false);
+    setCustomerError("");
+    setCustomerQuery("");
   }
 
   return <>
@@ -183,29 +186,51 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
           <strong>{convertedTotal === null ? money(total.toFixed(2)) : displayPayment(convertedTotal, displayCurrency)}</strong>
         </div>
         {displayCurrency !== "USD" && convertedTotal !== null && <p className="muted">Referencia {money(total.toFixed(2))}</p>}
-        {op.connection === "online" && <Button variant="ghost" disabled={busy} onClick={() => void showCustomers()}>{customer?.name ?? "Cliente opcional"}</Button>}
-        {customerOpen && op.connection === "online" && <div className="customer-box">
-          <Field label="Cliente registrado"><select value={customer?.id ?? ""} onChange={(e) => { draft.current = null; setCustomer(customerList.find((c) => c.id === e.target.value) ?? null); }}>
-            <option value="">Sin identificar</option>{customerList.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.document}</option>)}
-          </select></Field>
-          <form className="stack" onSubmit={async (event) => {
-            event.preventDefault();
-            const form = new FormData(event.currentTarget);
-            try {
-              const name = String(form.get("name"));
-              const document = String(form.get("document"));
-              const id = await rpc<string>("save_customer", { data: { name, document } });
-              const saved = { id, name, document };
-              draft.current = null;
-              setCustomer(saved);
-              setCustomerList((all) => [...all.filter((c) => c.id !== id), saved]);
-            } catch (error) { setError(accessError(error)); }
-          }}>
-            <Field label="Nombre del nuevo cliente"><input name="name" required maxLength={160} /></Field>
-            <Field label="Cédula o documento"><input name="document" required maxLength={40} /></Field>
-            <Button type="submit" variant="outline">Guardar cliente</Button>
-          </form>
-        </div>}
+        <section className="customer-box">
+          <div className="section-title"><div className="customer-heading"><UserRound size={19} /><div>
+            <h3>Cliente de la venta</h3>
+            <p>{customer ? customer.name + " · " + customer.document : "Venta sin cliente identificado"}</p>
+          </div></div>
+            <Button variant="outline" aria-expanded={customerOpen} disabled={busy || savingCustomer}
+              onClick={() => setCustomerOpen(!customerOpen)}>{customerOpen ? "Cerrar" : customer ? "Cambiar" : "Seleccionar"}</Button>
+          </div>
+          {customer && <Button variant="ghost" disabled={busy || savingCustomer} onClick={() => chooseCustomer(null)}>Quitar cliente</Button>}
+          {customerOpen && <>
+            {op.connection === "offline" && <p className="muted">Modo sin internet. Los registros nuevos se sincronizan al reconectar.</p>}
+            <Field label="Buscar cliente por nombre o documento">
+              <input type="search" value={customerQuery} disabled={busy || savingCustomer}
+                placeholder="Nombre o cédula" onChange={(event) => setCustomerQuery(event.target.value)} />
+            </Field>
+            {customerMatches.length ? <ul className="customer-results">
+              {customerMatches.slice(0, 8).map((row) => <li key={row.id}>
+                <Button variant="ghost" disabled={busy || savingCustomer} onClick={() => chooseCustomer(row)}>
+                  <span>{row.name}</span><small>{row.document}</small>
+                </Button>
+              </li>)}
+            </ul> : <p className="muted">Sin clientes para esta búsqueda.</p>}
+            {customerMatches.length > 8 && <p className="muted">Refina la búsqueda para ver otros resultados.</p>}
+            <Button variant="outline" disabled={busy || savingCustomer} onClick={() => setCustomerCreate(!customerCreate)}>
+              <UserPlus size={17} /> {customerCreate ? "Cerrar registro" : "Registrar cliente"}
+            </Button>
+            {customerCreate && <form className="stack" onSubmit={async (event) => {
+              event.preventDefault();
+              if (savingCustomer || busy) return;
+              const data = new FormData(event.currentTarget);
+              setCustomerError(""); setSavingCustomer(true);
+              try { chooseCustomer(await op.registerCustomer(data)); }
+              catch (error) { setCustomerError(accessError(error)); }
+              finally { setSavingCustomer(false); }
+            }}>
+              {customerError && <Notice>{customerError}</Notice>}
+              <Field label="Nombre completo"><input name="name" autoComplete="off" required maxLength={160} /></Field>
+              <div className="form-grid">
+                <Field label="Cédula o documento"><input name="document" autoComplete="off" required maxLength={40} /></Field>
+                <Field label="Teléfono (opcional)"><input name="phone" type="tel" maxLength={40} /></Field>
+              </div>
+              <Button type="submit" disabled={savingCustomer || busy}>{savingCustomer ? "Guardando…" : "Guardar y asignar cliente"}</Button>
+            </form>}
+          </>}
+        </section>
         <div className="section-title payment-heading"><h3>Pagos</h3></div>
         {payments.map((line, index) => {
           const remainder = balance.plus(paymentValues[index]);
@@ -246,7 +271,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
             {op.prepared ? "Desbloquear este dispositivo" : "Preparar este dispositivo"}
           </Button>
         </>}
-        <Button className="full" disabled={busy || !local || localExpired || invalidCart || invalidDiscount || !lines.length} onClick={() => void confirm()}>
+        <Button className="full" disabled={busy || savingCustomer || !local || localExpired || invalidCart || invalidDiscount || !lines.length} onClick={() => void confirm()}>
           <Check size={18} /> {busy ? "Guardando…" : "Confirmar venta"}
         </Button>
       </section>

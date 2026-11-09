@@ -16,7 +16,7 @@ export type Rate = { id: string; ves: number; cop: number; created_at: string };
 export type Method = { code: string; label: string };
 export type Catalog = { products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
 export type Grant = { id: string; cashier_id: string; issued_at: string; expires_at: string; rate_hours: number; stale_policy: "confirm" | "block"; catalog: Catalog };
-export type Customer = { id: string; name: string; document: string; phone?: string; notes?: string };
+export type Customer = { id: string; name: string; document: string; phone?: string | null; notes?: string | null };
 export type Payment = { currency: Currency; method: string; amount: string; change_amount: string };
 export type SalePayload = {
   id: string; grant_id: string; rate_id: string | null; customer_id: string | null; occurred_at: string;
@@ -24,6 +24,7 @@ export type SalePayload = {
 };
 export type Receipt = {
   id: string; occurred_at: string; cashier_name: string; customer_id?: string | null; customer_name: string | null; total: number | string;
+  customer_document?: string | null;
   discount?: number | string;
   sale_items: { product_id: string; name: string; quantity: number; unit_price: number | string }[];
   sale_payments: { currency: Currency; method: string; amount: number | string; change_amount: number | string; usd: number | string; rate: number | string }[];
