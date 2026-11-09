@@ -114,3 +114,77 @@ test("guarda una venta offline, reabre la PWA y sincroniza la misma operación u
   ]);
   expect(errors).toEqual([]);
 });
+
+test("conserva el formulario de un producto nuevo mientras se sincroniza el inventario", async ({ context, page }) => {
+  const currentCatalog = { ...catalog, products: [...catalog.products] };
+  let holdSync: Promise<void> | undefined;
+  let saveCount = 0;
+  await context.route("**/api/login", (route) =>
+    route.fulfill({ json: { access_token: jwt, refresh_token: "refresh-fixture" } }));
+  await context.route("https://supabase-fixture.example.com/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    let result: unknown = [];
+    if (path === "/auth/v1/user") result = { user };
+    if (path === "/rest/v1/profiles") result = { ...profile, role: "admin" };
+    if (path.endsWith("/rpc/catalog")) result = currentCatalog;
+    if (path.endsWith("/rpc/authorize_device")) {
+      await holdSync;
+      result = {
+        id: crypto.randomUUID(), cashier_id: userId, issued_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 86400000).toISOString(), rate_hours: 24, stale_policy: "confirm", catalog: currentCatalog,
+      };
+    }
+    if (path.endsWith("/rpc/save_product")) {
+      const { data, expected } = request.postDataJSON();
+      expect(expected).toBeNull();
+      expect(data).toMatchObject({ code: "PRUEBA-001", name: "Producto nuevo", price: "3.50", stock: "8" });
+      saveCount++;
+      const id = crypto.randomUUID();
+      currentCatalog.products.push({
+        ...catalog.products[0], id, price_id: crypto.randomUUID(), code: data.code,
+        name: data.name, price: Number(data.price), stock: Number(data.stock),
+      });
+      result = id;
+    }
+    await route.fulfill({ json: result, headers: { "Access-Control-Allow-Origin": "*" } });
+  });
+  await page.goto("/");
+  await page.getByLabel("Nombre de usuario").fill("cajero01");
+  await page.getByLabel("Contraseña").fill("prueba-ficticia");
+  await page.getByRole("button", { name: "Ingresar" }).click();
+  await expect(page.getByRole("heading", { name: "Resumen de la farmacia" })).toBeVisible();
+  await page.getByRole("button", { name: "Preparar dispositivo", exact: true }).click();
+  await page.getByLabel("Clave del dispositivo", { exact: true }).fill("mi clave local de prueba");
+  await page.getByLabel("Confirmar clave").fill("mi clave local de prueba");
+  await page.getByRole("button", { name: "Autorizar dispositivo" }).click();
+  await expect(page.getByText("Dispositivo preparado", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
+  await page.getByRole("button", { name: "Inventario", exact: true }).click();
+  await page.getByRole("button", { name: "Nuevo producto" }).click();
+  await page.getByLabel("Código interno", { exact: true }).fill("PRUEBA-001");
+  await page.getByLabel("Nombre", { exact: true }).fill("Producto nuevo");
+
+  let releaseSync!: () => void;
+  holdSync = new Promise<void>((resolve) => { releaseSync = resolve; });
+  try {
+    await page.getByRole("button", { name: "Actualizar y sincronizar" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Sincronizando" })).toBeVisible();
+    await expect(page.getByLabel("Nombre", { exact: true })).toHaveValue("Producto nuevo", { timeout: 2500 });
+  } finally {
+    releaseSync();
+  }
+
+  await expect(page.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
+  await context.setOffline(true);
+  await expect(page.getByRole("button", { name: "Guardar producto" })).toBeDisabled();
+  await expect(page.getByLabel("Código interno", { exact: true })).toHaveValue("PRUEBA-001");
+  await context.setOffline(false);
+  await expect(page.getByRole("button", { name: "Guardar producto" })).toBeEnabled();
+  await page.getByLabel("Precio USD", { exact: true }).fill("3,50");
+  await page.getByLabel("Existencias", { exact: true }).fill("8");
+  await page.getByRole("button", { name: "Guardar producto" }).click();
+  await expect(page.getByText("Producto registrado.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "Producto nuevo" })).toBeVisible();
+  expect(saveCount).toBe(1);
+});

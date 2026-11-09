@@ -1,8 +1,8 @@
 "use client";
 import { useMemo, useState } from "react";
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { ArrowDownToLine, FileSpreadsheet, History, Plus, Search } from "lucide-react";
 import { useForm } from "react-hook-form";
+import { ArrowDownToLine, FileSpreadsheet, History, Plus, Search } from "lucide-react";
 import { displayDate, localDay, money, normalize, productFields, productSchema, type Product, type ProductField } from "@/lib/domain";
 import { exportTable } from "@/lib/export";
 import { initialMapping, readInventory, reviewInventory } from "@/lib/import-inventory";
@@ -11,6 +11,8 @@ import { accessError, type Operation } from "@/lib/use-operation";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
+const emptyProducts: Product[] = [];
+const coreRowModel = getCoreRowModel<Product>();
 const column = createColumnHelper<Product>();
 const columns = [
   column.accessor("name", { header: "Producto", cell: ({ row }) => <><strong>{row.original.name}</strong><small>{row.original.code} · {row.original.presentation || "Sin presentación"}</small></> }),
@@ -31,13 +33,20 @@ export function Inventory({ op }: { op: Operation }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const admin = op.profile?.role === "admin";
-  const online = op.connection === "online" || (op.connection === "error" && Boolean(op.catalog));
-  const products = op.catalog?.products ?? [];
-  const filtered = products.filter((p) => normalize([p.code, p.barcode, p.name, p.category, p.ingredient].join(" ")).includes(normalize(query.trim())) &&
-    (filter === "all" || (filter === "low" && p.active && p.stock <= p.min_stock) || (filter === "inactive" && !p.active) ||
-      (filter === "expiring" && p.active && p.expiration && p.expiration <= localDay(Date.now() + 30 * 86400000))));
+  const online = op.connection === "online" || op.connection === "syncing" || (op.connection === "error" && Boolean(op.catalog));
+  const products = op.catalog?.products ?? emptyProducts;
+  const expiryLimit = localDay(Date.now() + 30 * 86400000);
+  const filtered = useMemo(() => {
+    const search = normalize(query.trim());
+    return products.filter((p) => normalize([p.code, p.barcode, p.name, p.category, p.ingredient].join(" ")).includes(search) &&
+      (filter === "all" || (filter === "low" && p.active && p.stock <= p.min_stock) || (filter === "inactive" && !p.active) ||
+        (filter === "expiring" && p.active && p.expiration && p.expiration <= expiryLimit)));
+  }, [products, query, filter, expiryLimit]);
   const index = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
-  const table = useReactTable({ data: filtered.slice(index * 25, index * 25 + 25), columns, getCoreRowModel: getCoreRowModel() });
+  const visibleProducts = useMemo(() => filtered.slice(index * 25, index * 25 + 25), [filtered, index]);
+  const table = useReactTable({
+    data: visibleProducts, columns, getCoreRowModel: coreRowModel, autoResetPageIndex: false,
+  });
 
   async function refresh(text: string) { setMessage(text); setError(""); setEditing(null); setAdjusting(null); await op.sync(true); }
 
@@ -53,7 +62,9 @@ export function Inventory({ op }: { op: Operation }) {
     {error && <Notice>{error}</Notice>}
     {mode === "import" && admin && online ? <ImportWizard products={products} onDone={async () => { await op.sync(true); }} />
       : mode === "history" && admin && online ? <InventoryHistory /> : <>
-        {editing && admin && online && <ProductForm key={editing === "new" ? "new" : editing.id} product={editing === "new" ? undefined : editing} onCancel={() => setEditing(null)} onSaved={refresh} />}
+        {editing && admin && <ProductForm key={editing === "new" ? "new" : editing.id}
+          product={editing === "new" ? undefined : editing} online={online}
+          onCancel={() => setEditing(null)} onSaved={refresh} />}
         {adjusting && admin && online && <section className="card">
           <h2>Ajustar existencias de {adjusting.name}</h2><p className="muted">Saldo registrado {adjusting.stock}. Usa una cantidad positiva para entradas y negativa para salidas.</p>
           <form className="form-grid" onSubmit={async (event) => {
@@ -90,12 +101,13 @@ export function Inventory({ op }: { op: Operation }) {
   </>;
 }
 
-function ProductForm({ product, onSaved, onCancel }: { product?: Product; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
+function ProductForm({ product, online, onSaved, onCancel }: { product?: Product; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
   const { register, handleSubmit, formState } = useForm<Partial<Record<ProductField, string>> & { active: boolean }>({
     defaultValues: { ...Object.fromEntries(productFields.map(([field]) => [field, String(product?.[field] ?? "")])), active: product?.active ?? true },
   });
   const [error, setError] = useState("");
   const submit = handleSubmit(async (values) => {
+    if (!online) return;
     const clean = { ...values, price: values.price?.replace(",", "."), min_stock: values.min_stock || "0" };
     if (product) delete clean.stock;
     else clean.stock = values.stock || "0";
@@ -104,12 +116,14 @@ function ProductForm({ product, onSaved, onCancel }: { product?: Product; onSave
       setError("Revisa " + parsed.error.issues.map(({ path }) => productFields.find(([field]) => field === path[0])?.[1]).filter(Boolean).join(", ") + ".");
       return;
     }
+    setError("");
     try {
       await rpc("save_product", { data: { ...parsed.data, code: product?.code ?? parsed.data.code }, expected: product?.updated_at ?? null });
       await onSaved(product ? "Producto actualizado." : "Producto registrado.");
     } catch (error) { setError(accessError(error)); }
   });
   return <section className="card stack"><h2>{product ? "Editar medicamento" : "Registrar medicamento"}</h2>
+    {!online && <Notice>El formulario sigue abierto. Conéctate a internet para guardar el producto.</Notice>}
     {error && <Notice>{error}</Notice>}
     <form className="stack" onSubmit={submit}>
       <div className="form-grid">{productFields.filter(([key]) => !product || key !== "stock").map(([key, label]) =>
@@ -117,7 +131,7 @@ function ProductForm({ product, onSaved, onCancel }: { product?: Product; onSave
           type={key === "expiration" ? "date" : "text"} inputMode={key === "price" ? "decimal" : key.includes("stock") ? "numeric" : "text"}
           required={["code", "name", "price"].includes(key)} /></Field>)}</div>
       <label className="checkline"><input type="checkbox" {...register("active")} /> Producto activo</label>
-      <div className="actions"><Button type="submit" disabled={formState.isSubmitting}>Guardar producto</Button><Button variant="ghost" onClick={onCancel}>Cancelar</Button></div>
+      <div className="actions"><Button type="submit" disabled={!online || formState.isSubmitting}>{formState.isSubmitting ? "Guardando…" : "Guardar producto"}</Button><Button variant="ghost" onClick={onCancel}>Cancelar</Button></div>
     </form>
   </section>;
 }
