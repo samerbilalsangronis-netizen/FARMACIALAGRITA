@@ -126,6 +126,10 @@ button{font:inherit}
 .search input:focus-visible{outline:0}
 .table-scroll{overflow:auto}
 .table-scroll.tall{max-height:460px}
+.inventory-table{container-type:inline-size}
+.inventory-editing{background:#f4f8f5}
+.inventory-editor{max-width:calc(100cqw - 18px)}
+.inventory-editor h2{scroll-margin:12px}
 table{width:100%;border-collapse:collapse;text-align:left}
 th,td{padding:10px 9px;border-bottom:1px solid #edf2ee;vertical-align:middle}
 th{background:#f4f8f5;font-size:12px;white-space:nowrap}

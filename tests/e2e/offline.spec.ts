@@ -14,7 +14,7 @@ const catalog = {
   rate: { id: rateId, ves: 250, cop: 4000, created_at: issuedAt },
   methods: [{ code: "cash", label: "Efectivo" }, { code: "mobile", label: "Pago móvil" }],
   products: [{ id: productId, price_id: priceId, code: "ACET", barcode: "101", name: "Acetaminofén", price: 5, stock: 3,
-    presentation: "Caja", strength: "500 mg", active: true, min_stock: 1 }],
+    presentation: "Caja", strength: "500 mg", active: true, min_stock: 1, updated_at: issuedAt }],
 };
 
 test("registra cliente y venta offline, reabre la PWA y sincroniza una sola vez", async ({ context, page }, testInfo) => {
@@ -174,15 +174,24 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
     }
     if (path.endsWith("/rpc/save_product")) {
       const { data, expected } = request.postDataJSON();
-      expect(expected).toBeNull();
-      expect(data).toMatchObject({ code: "PRUEBA-001", name: "Producto nuevo", price: "3.50", stock: "8" });
       saveCount++;
-      const id = crypto.randomUUID();
-      currentCatalog.products.push({
-        ...catalog.products[0], id, price_id: crypto.randomUUID(), code: data.code,
-        name: data.name, price: Number(data.price), stock: Number(data.stock),
-      });
-      result = id;
+      const existing = currentCatalog.products.find((product) => product.code === data.code);
+      if (existing) {
+        expect(expected).toBe(issuedAt);
+        expect(data).toMatchObject({ code: "PRUEBA-001", name: "Producto nuevo", price: "4.25" });
+        expect(data).not.toHaveProperty("stock");
+        existing.price = Number(data.price);
+        result = existing.id;
+      } else {
+        expect(expected).toBeNull();
+        expect(data).toMatchObject({ code: "PRUEBA-001", name: "Producto nuevo", price: "3.50", stock: "8" });
+        const id = crypto.randomUUID();
+        currentCatalog.products.push({
+          ...catalog.products[0], id, price_id: crypto.randomUUID(), code: data.code,
+          name: data.name, price: Number(data.price), stock: Number(data.stock), updated_at: issuedAt,
+        });
+        result = id;
+      }
     }
     await route.fulfill({ json: result, headers: { "Access-Control-Allow-Origin": "*" } });
   });
@@ -222,6 +231,14 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   await page.getByLabel("Existencias", { exact: true }).fill("8");
   await page.getByRole("button", { name: "Guardar producto" }).click();
   await expect(page.getByText("Producto registrado.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "Producto nuevo" })).toBeVisible();
+  const row = page.getByRole("row").filter({ has: page.getByText("Producto nuevo", { exact: true }) });
+  await expect(row).toBeVisible();
   expect(saveCount).toBe(1);
+  await row.getByRole("button", { name: "Editar" }).click();
+  const editor = row.locator("xpath=following-sibling::tr[1]");
+  await expect(editor.getByRole("heading", { name: "Editar Producto nuevo" })).toBeFocused();
+  await editor.getByLabel("Precio USD", { exact: true }).fill("4,25");
+  await editor.getByRole("button", { name: "Guardar producto" }).click();
+  await expect(row).toContainText("4,25");
+  expect(saveCount).toBe(2);
 });

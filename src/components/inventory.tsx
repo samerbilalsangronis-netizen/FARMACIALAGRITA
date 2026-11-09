@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useForm } from "react-hook-form";
 import { ArrowDownToLine, FileSpreadsheet, History, Plus, Search } from "lucide-react";
@@ -62,8 +62,7 @@ export function Inventory({ op }: { op: Operation }) {
     {error && <Notice>{error}</Notice>}
     {mode === "import" && admin && online ? <ImportWizard products={products} onDone={async () => { await op.sync(true); }} />
       : mode === "history" && admin && online ? <InventoryHistory /> : <>
-        {editing && admin && <ProductForm key={editing === "new" ? "new" : editing.id}
-          product={editing === "new" ? undefined : editing} online={online}
+        {editing === "new" && admin && <ProductForm online={online}
           onCancel={() => setEditing(null)} onSaved={refresh} />}
         {adjusting && admin && online && <section className="card">
           <h2>Ajustar existencias de {adjusting.name}</h2><p className="muted">Saldo registrado {adjusting.stock}. Usa una cantidad positiva para entradas y negativa para salidas.</p>
@@ -88,12 +87,25 @@ export function Inventory({ op }: { op: Operation }) {
             </select>
             {admin && <Button variant="outline" onClick={() => void exportTable("inventario", productFields.map(([, label]) => label), filtered.map((p) => productFields.map(([field]) => p[field]))).catch((e) => setError(accessError(e)))}><ArrowDownToLine size={17} /> Exportar CSV</Button>}
           </div>
-          {filtered.length === 0 ? <Empty>No hay medicamentos para este filtro.</Empty> : <div className="table-scroll"><table>
+          {filtered.length === 0 ? <Empty>No hay medicamentos para este filtro.</Empty> : <div className="table-scroll inventory-table"><table>
             <thead>{table.getHeaderGroups().map((group) => <tr key={group.id}>{group.headers.map((head) => <th key={head.id}>{flexRender(head.column.columnDef.header, head.getContext())}</th>)}{admin && online && <th>Acciones</th>}</tr>)}</thead>
-            <tbody>{table.getRowModel().rows.map((row) => <tr key={row.original.id}>
-              {row.getVisibleCells().map((cell) => <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}
-              {admin && online && <td><div className="actions"><Button variant="ghost" onClick={() => { setEditing(row.original); setAdjusting(null); }}>Editar</Button><Button variant="ghost" onClick={() => { setAdjusting(row.original); setEditing(null); }}>Ajustar</Button></div></td>}
-            </tr>)}</tbody>
+            <tbody>{table.getRowModel().rows.map((row) => {
+              const isEditing = editing !== "new" && editing?.id === row.original.id;
+              return <Fragment key={row.original.id}>
+                <tr className={isEditing ? "inventory-editing" : undefined}>
+                  {row.getVisibleCells().map((cell) => <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}
+                  {admin && online && <td><div className="actions">
+                    <Button variant="ghost" aria-expanded={isEditing} onClick={() => { setEditing(isEditing ? null : row.original); setAdjusting(null); }}>Editar</Button>
+                    <Button variant="ghost" onClick={() => { setAdjusting(row.original); setEditing(null); }}>Ajustar</Button>
+                  </div></td>}
+                </tr>
+                {isEditing && editing && admin && <tr className="inventory-editing">
+                  <td colSpan={columns.length + (online ? 1 : 0)}>
+                    <ProductForm product={editing} online={online} onCancel={() => setEditing(null)} onSaved={refresh} />
+                  </td>
+                </tr>}
+              </Fragment>;
+            })}</tbody>
           </table></div>}
           {filtered.length > 25 && <div className="toolbar"><Button variant="outline" disabled={index === 0} onClick={() => setPage(index - 1)}>Anterior</Button><span>{index + 1} de {Math.ceil(filtered.length / 25)}</span><Button variant="outline" disabled={(index + 1) * 25 >= filtered.length} onClick={() => setPage(index + 1)}>Siguiente</Button></div>}
         </section>
@@ -106,6 +118,12 @@ function ProductForm({ product, online, onSaved, onCancel }: { product?: Product
     defaultValues: { ...Object.fromEntries(productFields.map(([field]) => [field, String(product?.[field] ?? "")])), active: product?.price === null ? true : product?.active ?? true },
   });
   const [error, setError] = useState("");
+  const title = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (!product || !title.current) return;
+    title.current.focus({ preventScroll: true });
+    title.current.scrollIntoView({ block: "nearest", inline: "start" });
+  }, [product]);
   const submit = handleSubmit(async (values) => {
     if (!online) return;
     const clean = { ...values, price: values.price?.replace(",", "."), min_stock: values.min_stock || "0" };
@@ -122,7 +140,8 @@ function ProductForm({ product, online, onSaved, onCancel }: { product?: Product
       await onSaved(product ? "Producto actualizado." : "Producto registrado.");
     } catch (error) { setError(accessError(error)); }
   });
-  return <section className="card stack"><h2>{product ? "Editar medicamento" : "Registrar medicamento"}</h2>
+  return <section className={product ? "card stack inventory-editor" : "card stack"}>
+    <h2 ref={title} tabIndex={product ? -1 : undefined}>{product ? "Editar " + product.name : "Registrar medicamento"}</h2>
     {product?.price === null && <p className="muted">Registra el precio de venta en USD para habilitar este producto en caja.</p>}
     {!online && <Notice>El formulario sigue abierto. Conéctate a internet para guardar el producto.</Notice>}
     {error && <Notice>{error}</Notice>}
