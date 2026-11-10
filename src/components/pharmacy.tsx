@@ -10,6 +10,7 @@ import { Inventory } from "./inventory";
 import { Sales } from "./sales";
 import { ReceiptView, Records, Reports, summarize } from "./records";
 import { Customers, Settings } from "./admin";
+import { Registers } from "./registers";
 import { Button } from "./ui/button";
 import { Brand, Field, Heading, Notice } from "./ui/shared";
 
@@ -20,6 +21,7 @@ const nav = [
   { id: "history", label: "Historial de ventas", icon: History, admin: false },
   { id: "customers", label: "Clientes", icon: Users, admin: false },
   { id: "fiscal", label: "Pendientes fiscales", icon: ClipboardCheck, admin: true },
+  { id: "registers", label: "Cierres diarios", icon: ClipboardCheck, admin: false },
   { id: "reports", label: "Reportes", icon: BarChart3, admin: true },
   { id: "settings", label: "Configuración", icon: Settings2, admin: true },
 ] as const;
@@ -98,6 +100,7 @@ export function Pharmacy() {
           {current === "history" && <Records op={op} onReceipt={setReceipt} />}
           {current === "customers" && <Customers op={op} />}
           {current === "fiscal" && <Records op={op} fiscal onReceipt={setReceipt} />}
+          {current === "registers" && <Registers op={op} />}
           {current === "reports" && <Reports op={op} />}
           {current === "settings" && <Settings op={op} />}
         </motion.div>
@@ -212,6 +215,7 @@ function Dashboard({ op, open }: { op: Operation; open: (page: View) => void }) 
     <div className="stats-grid dashboard-stats">{tiles.map(({ name, value, detail, icon: Icon, tone }) =>
       <section className="card stat" key={name}><div className="stat-top"><span>{name}</span><div className={"stat-icon " + tone}><Icon size={19} /></div></div>
         <strong>{value}</strong><small>{detail}</small></section>)}</div>
+    {admin && <Registers op={op} dashboard />}
     {op.historyTruncated && <Notice>El resumen usa el historial cargado. Las ventas más antiguas pueden consultarse desde Historial de ventas.</Notice>}
     <div className="split">
       <section className="card stack"><div className="section-title"><div><h2>Cobros de hoy</h2><p>Importe neto por moneda</p></div><Activity size={21} /></div>

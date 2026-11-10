@@ -242,3 +242,70 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   await expect(row).toContainText("4,25");
   expect(saveCount).toBe(2);
 });
+
+test("cada cajera cierra su caja y la administración descarga los tres cierres", async ({ browser }, testInfo) => {
+  const summary = {
+    sales: 1, units: 2, usd: 5, ves: 1250, cop: 20000, without_rate: 0, discounts: 0,
+    products: [{ product_id: productId, name: "Acetaminofén", units: 2, subtotal: 5 }],
+    payments: [{ currency: "USD", method: "cash", net: 5 }],
+  };
+  const closed = { revision: 1, closed_at: issuedAt, cashier_name: "cajera1", summary };
+  let closeCount = 0;
+  for (const role of ["cashier", "admin"] as const) {
+    const context = await browser.newContext();
+    try {
+      await context.route("**/api/login", (route) => route.fulfill({ json: { access_token: jwt, refresh_token: "refresh-fixture" } }));
+      await context.route("https://supabase-fixture.example.com/**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        let result: unknown = [];
+        if (path === "/auth/v1/user") result = { user };
+        if (path === "/rest/v1/profiles") result = { ...profile, role };
+        if (path.endsWith("/rpc/catalog")) result = catalog;
+        if (path.endsWith("/rpc/close_register")) {
+          expect(role).toBe("cashier");
+          closeCount++;
+          result = 1;
+        }
+        if (path.endsWith("/rpc/register_day")) {
+          const box = { register_no: 1, username: "cajera1", summary, closure: closeCount ? closed : null, changed: false };
+          result = role === "cashier" ? [box] : [box, ...[2, 3].map((n) => ({
+            ...box, register_no: n, username: "cajera" + n, closure: { ...closed, cashier_name: "cajera" + n },
+          }))];
+        }
+        await route.fulfill({ json: result, headers: { "Access-Control-Allow-Origin": "*" } });
+      });
+      const page = await context.newPage();
+      await page.goto("http://127.0.0.1:3417/");
+      await page.getByLabel("Nombre de usuario").fill("cajero01");
+      await page.getByLabel("Contraseña").fill("prueba-ficticia");
+      await page.getByRole("button", { name: "Ingresar" }).click();
+      if (role === "admin") {
+        await expect(page.getByRole("heading", { name: "Ventas de hoy por caja" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Caja 3", exact: true })).toBeVisible();
+      } else {
+        await expect(page.getByRole("heading", { name: "Resumen de la farmacia" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Ventas de hoy por caja" })).toHaveCount(0);
+      }
+      await page.getByRole("button", { name: "Cierres diarios", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Caja 1", exact: true })).toBeVisible();
+      if (role === "cashier") {
+        await expect(page.getByRole("heading", { name: "Caja 2", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "PDF consolidado" })).toHaveCount(0);
+        await page.getByRole("button", { name: "Cerrar caja", exact: true }).click();
+        await page.getByRole("button", { name: "Confirmar cierre" }).click();
+        await expect(page.getByText("Cierre registrado · Versión 1")).toBeVisible();
+        await expect(page.getByRole("button", { name: "PDF de la caja" })).toBeEnabled();
+      } else {
+        await expect(page.getByRole("heading", { name: "Caja 3", exact: true })).toBeVisible();
+        const downloading = page.waitForEvent("download");
+        await page.getByRole("button", { name: "PDF consolidado" }).click();
+        const download = await downloading;
+        expect(download.suggestedFilename()).toMatch(/consolidado\.pdf$/);
+        await download.saveAs(testInfo.outputPath("cierre-consolidado.pdf"));
+      }
+    } finally {
+      await context.close();
+    }
+  }
+  expect(closeCount).toBe(1);
+});

@@ -6,6 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 const admin = "11111111-1111-4111-8111-111111111111";
 const first = "22222222-2222-4222-8222-222222222222";
 const second = "33333333-3333-4333-8333-333333333333";
+const third = "55555555-5555-4555-8555-555555555555";
 const unmanaged = "44444444-4444-4444-8444-444444444444";
 const file = new URL("../supabase/migrations/", import.meta.url);
 
@@ -16,15 +17,19 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
     create role anon;
     create role authenticated;
     create schema auth;
-    create table auth.users (id uuid primary key);
+    create table auth.users (id uuid primary key, email text unique);
     create function auth.uid() returns uuid language sql stable
       as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to authenticated;
-    insert into auth.users values ('${admin}'),('${first}'),('${second}'),('${unmanaged}');
+    insert into auth.users values ('${admin}','admin@prueba.local'),('${first}','cajera1@prueba.local'),
+      ('${second}','cajera2@prueba.local'),('${third}','cajera3@prueba.local'),('${unmanaged}',null);
   `);
   for (const name of (await readdir(file)).sort()) await db.exec(await readFile(new URL(name, file), "utf8"));
-  await db.exec(`insert into public.profiles(id,username,role) values
-    ('${admin}','admin','admin'),('${first}','cajero1','cashier'),('${second}','cajero2','cashier')`);
+  await db.exec(`insert into public.profiles(id,username,role) values ('${admin}','admin','admin')`);
+  const configure = (await readFile(new URL("../supabase/configurar_cajas.sql", import.meta.url), "utf8"))
+    .replace("= '';", "= 'prueba.local';");
+  await db.exec(configure);
+  await db.exec(configure);
   const as = async (actor, role = "authenticated") => {
     await db.exec("reset role");
     await db.query("select set_config('request.jwt.claim.sub',$1,false)", [actor]);
@@ -91,7 +96,31 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
   assert.equal(await rpc("(select count(*)::integer from public.sales)"), 1);
   assert.equal(await rpc("(select count(*)::integer from public.sale_items)"), 1);
   assert.equal(await rpc("(select count(*)::integer from public.fiscal_transfers)"), 0);
+  const day = await rpc("((current_timestamp at time zone 'America/Caracas')::date)::text");
+  const own = await rpc("public.register_day($1)", [day]);
+  assert.deepEqual(own.map((box) => box.register_no), [2]);
+  assert.equal(own[0].summary.sales, 1);
+  assert.equal(own[0].summary.units, 2);
+  assert.equal(own[0].summary.usd, 12);
+  assert.equal(own[0].summary.ves, 3000);
+  assert.equal(own[0].summary.cop, 48000);
+  assert.deepEqual(own[0].summary.payments, [
+    { currency: "USD", method: "cash", net: 9 }, { currency: "VES", method: "mobile", net: 750 },
+  ]);
+  assert.equal(own[0].summary.products[0].units, 2);
+  assert.equal(await rpc("public.close_register($1)", [day]), 1);
+  assert.equal(await rpc("public.close_register($1)", [day]), 1);
+  await assert.rejects(db.exec("select * from public.register_closures"), /permission denied/);
+  await assert.rejects(rpc("public.adjust_inventory($1,1,'Intento cajera')", [product]), /no autorizada/);
+  await as(first);
+  assert.deepEqual((await rpc("public.register_day($1)", [day])).map((box) => box.register_no), [1]);
+  assert.equal(await rpc("public.close_register($1)", [day]), 1);
+  await as(third);
+  assert.deepEqual((await rpc("public.register_day($1)", [day])).map((box) => [box.register_no, box.summary.sales]), [[3, 0]]);
+  assert.equal(await rpc("public.close_register($1)", [day]), 1);
   await as(admin);
+  assert.deepEqual((await rpc("public.register_day($1)", [day])).map((box) => box.register_no), [1, 2, 3]);
+  await assert.rejects(rpc("public.close_register($1)", [day]), /caja asignada/);
   assert.equal(await rpc("(select count(*)::integer from public.sales)"), 2);
   assert.equal(await rpc("(select stock from public.products where code='ACET-1')"), -1);
   assert.equal(await rpc("(select count(*)::integer from public.inventory_movements where kind='sale')"), 2);
@@ -101,6 +130,15 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
   await rpc("public.set_fiscal_status($1,'void','','2026-11-08','Operación anulada')", [secondSale.id]);
   assert.equal(await rpc("(select stock from public.products where code='ACET-1')"), 3);
   assert.equal(await rpc("(select fiscal_status from public.sales where id=$1)", [secondSale.id]), "void");
+  const afterVoid = (await rpc("public.register_day($1)", [day]))[1];
+  assert.equal(afterVoid.changed, true);
+  assert.equal(afterVoid.summary.sales, 0);
+  assert.equal(afterVoid.closure.summary.sales, 1);
+  await as(second);
+  assert.equal(await rpc("public.close_register($1)", [day]), 2);
+  const revised = (await rpc("public.register_day($1)", [day]))[0];
+  assert.equal(revised.changed, false);
+  assert.equal(revised.closure.summary.sales, 0);
   await as(unmanaged);
   await assert.rejects(rpc("public.catalog()"), /no autorizada/);
   assert.equal(await rpc("(select count(*)::integer from public.products)"), 0);
@@ -113,10 +151,10 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
   assert.equal(await rpc("(select count(*)::integer from public.sales)"), 2);
   await db.exec(cleanup.replace("= 'SIMULAR';", "= 'BORRAR_DATOS_DE_PRUEBA';"));
   for (const table of ["sales", "sale_items", "sale_payments", "fiscal_transfers", "customers", "inventory_movements",
-    "inventory_imports", "products", "product_prices", "exchange_rates", "device_grants"]) {
+    "inventory_imports", "products", "product_prices", "exchange_rates", "device_grants", "register_closures"]) {
     assert.equal(await rpc("(select count(*)::integer from public." + table + ")"), 0, table);
   }
-  assert.equal(await rpc("(select count(*)::integer from public.profiles)"), 3);
-  assert.equal(await rpc("(select count(*)::integer from auth.users)"), 4);
+  assert.equal(await rpc("(select count(*)::integer from public.profiles)"), 4);
+  assert.equal(await rpc("(select count(*)::integer from auth.users)"), 5);
   assert.equal(await rpc("(select count(*)::integer from public.payment_methods)"), 3);
 });

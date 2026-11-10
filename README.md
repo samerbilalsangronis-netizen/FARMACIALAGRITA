@@ -57,3 +57,14 @@ Si ya aplicaste las tres primeras migraciones, ejecuta solo [202611080004_fiscal
 ### Limpieza después de las pruebas
 
 El archivo [limpieza_preentrega.sql](supabase/limpieza_preentrega.sql) se ejecuta manualmente en el SQL Editor. En modo `SIMULAR` solo muestra los conteos. El modo de borrado vacía el historial operativo completo y se usa únicamente si todos esos registros son ficticios. Conserva las cuentas, los perfiles, la configuración y los métodos de pago. Cierra las cajas, revisa que las colas de prueba se hayan sincronizado y exporta cualquier dato que quieras conservar antes de usarlo. Después, borra los datos locales del sitio en los dispositivos usados para pruebas, vuelve a prepararlos con internet y configura las tasas vigentes.
+
+
+## Tres cajas y cierres diarios
+
+1. En una base de prueba, aplica las migraciones en orden hasta `202611100006_cajas.sql`.
+2. En **Authentication → Users**, crea `cajera1`, `cajera2` y `cajera3` con el mismo dominio de acceso que usa FarmaWorld. Confirma los correos desde el panel y asigna una contraseña distinta a cada cuenta.
+3. Escribe el dominio en `supabase/configurar_cajas.sql` y ejecútalo desde SQL Editor. El script vincula las cuentas a las cajas 1, 2 y 3. Cada cajera entra con su nombre de usuario y prepara su propio equipo para vender sin conexión.
+4. Al final del día, sincroniza las ventas en cada equipo y abre **Cierres diarios**. La cajera confirma su cierre y puede descargar su PDF. Administración consulta los tres cierres y descarga el PDF consolidado. La fecha corresponde a la hora de Venezuela.
+5. El resumen por caja agrupa las ventas sincronizadas a partir de la asignación. Los equivalentes usan la tasa registrada en cada venta. Los cobros netos se muestran por moneda y método. Las ventas tardías y anulaciones posteriores aparecen como cambios pendientes de incorporar. La cajera puede emitir una nueva versión del cierre sin perder la anterior.
+
+Para producción, aplica primero la migración durante la ventana acordada, vincula las tres cuentas y publica la versión de la app después de comprobar que el servidor responde. Si usas Vercel Preview, configura allí las variables de una base de prueba.

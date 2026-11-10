@@ -44,7 +44,8 @@ begin
     public.products,
     public.customers,
     public.exchange_rates,
-    public.device_grants
+    public.device_grants,
+    public.register_closures
   restrict;
 
   delete from public.audit_logs
