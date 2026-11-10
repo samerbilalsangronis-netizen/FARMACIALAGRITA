@@ -21,11 +21,27 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
+async function navigate(request) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+  let response;
+  try {
+    response = await fetch(request, { cache: "no-cache", signal: controller.signal });
+    if (response.ok) return response;
+  } catch {
+    // The installed shell is still available during an outage.
+  } finally {
+    clearTimeout(timeout);
+  }
+  const cache = await caches.open(CACHE);
+  return (await cache.match(root())) ?? response ?? Response.error();
+}
+
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
   if (event.request.mode === "navigate" && url.pathname === "/") {
-    event.respondWith(caches.open(CACHE).then(async (cache) => (await cache.match(root())) || fetch(event.request)));
+    event.respondWith(navigate(event.request));
     return;
   }
   if (ASSETS.has(url.pathname) || url.pathname.startsWith("/_next/static/")) {
