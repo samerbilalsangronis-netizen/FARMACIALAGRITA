@@ -94,39 +94,64 @@ export function Registers({ op, dashboard = false }: { op: Operation; dashboard?
         entries.some(({ closure }) => closure.summary[currency] === null) ? null :
           entries.reduce((sum, { closure }) => sum.plus(closure.summary[currency] ?? 0), new decimal(0)).toFixed(currency === "cop" ? 0 : 2);
       const right = (label: string, width: number) => ({ label, width, align: "right" as const });
-      const sections: ReportSection[] = [{
-        title: "Estado de las cajas",
-        columns: [{ label: "Caja", width: 24 }, { label: "Cajera", width: 44 }, { label: "Estado", width: 53 }, { label: "Hora del cierre", width: 57 }],
-        rows: (only === undefined ? boxes ?? [] : entries).map((box) => [
-          "Caja " + box.register_no, box.closure?.cashier_name ?? box.username ?? "—",
-          box.closure ? status(box) + " · v" + box.closure.revision : status(box),
-          box.closure ? displayDate(box.closure.closed_at) : "—",
-        ]),
-      }];
-      for (const { register_no: box, closure: { summary } } of entries) {
+      const sections: ReportSection[] = [];
+      if (only === undefined) {
         sections.push({
-          title: "Caja " + box + " · Totales registrados",
-          columns: [right("Ventas", 20), right("Unidades", 23), right("Descuento", 32), right("Total USD", 33), right("Equiv. Bs.", 34), right("Equiv. COP", 36)],
-          rows: [[count.format(summary.sales), count.format(summary.units), money(summary.discounts), money(summary.usd),
-            equivalent(summary.ves, "VES"), equivalent(summary.cop, "COP")]],
-        }, {
-          title: "Caja " + box + " · Productos",
+          title: "Comparativo por caja",
+          columns: [{ label: "Caja / cajera", width: 38 }, { label: "Estado", width: 35 }, right("Ventas", 18),
+            right("Unidades", 21), right("Descuento", 28), right("Total USD", 38)],
+          rows: (boxes ?? []).map((box) => {
+            const summary = box.closure?.summary;
+            const name = box.closure?.cashier_name ?? box.username;
+            const state = box.closure ? status(box) + " · v" + box.closure.revision : status(box);
+            return [
+              "Caja " + box.register_no + (name ? " / " + name : ""), state,
+              summary ? count.format(summary.sales) : "—", summary ? count.format(summary.units) : "—",
+              summary ? money(summary.discounts) : "—", summary ? money(summary.usd) : "—",
+            ];
+          }),
+        });
+      }
+
+      for (const { register_no: box, closure: { summary, closed_at, revision } } of entries) {
+        if (only === undefined) sections.push({
+          title: "Caja " + box + " · Datos del cierre",
+          columns: [{ label: "Fecha y hora", width: 55 }, right("Versión", 23), right("Equiv. Bs.", 50), right("Equiv. COP", 50)],
+          rows: [[displayDate(closed_at), String(revision), equivalent(summary.ves, "VES"), equivalent(summary.cop, "COP")]],
+        });
+        const prefix = only === undefined ? "Caja " + box + " · " : "";
+        sections.push({
+          title: prefix + "Productos vendidos",
           columns: [{ label: "Producto", width: 96 }, right("Unidades", 28), right("Subtotal USD", 54)],
           rows: summary.products.map((p) => [p.name, count.format(p.units), money(p.subtotal)]),
         }, {
-          title: "Caja " + box + " · Cobros netos",
+          title: prefix + "Cobros netos",
           columns: [{ label: "Método", width: 78 }, { label: "Moneda", width: 32 }, right("Importe", 68)],
           rows: summary.payments.map((p) => [op.catalog?.methods.find((m) => m.code === p.method)?.label ?? p.method, p.currency, money(p.net, p.currency)]),
         });
       }
+      const sales = entries.reduce((sum, { closure }) => sum + closure.summary.sales, 0);
+      const units = entries.reduce((sum, { closure }) => sum + closure.summary.units, 0);
+      const individual = only === undefined ? null : entries[0].closure;
+      const facts = individual ? [
+        { label: "CAJERA", value: individual.cashier_name },
+        { label: "CIERRE / VERSIÓN " + individual.revision, value: displayDate(individual.closed_at) },
+        { label: "VENTAS / UNIDADES", value: count.format(sales) + " / " + count.format(units) },
+        { label: "DESCUENTOS", value: money(individual.summary.discounts) },
+      ] : [
+        { label: "CAJAS INCLUIDAS", value: entries.length + " de 3" },
+        { label: "VENTAS", value: count.format(sales) },
+        { label: "UNIDADES", value: count.format(units) },
+      ];
       const settings = op.catalog?.settings;
       const report = createReportPdf({
         title: only === undefined ? "Cierre diario consolidado" : "Cierre diario · Caja " + only,
         pharmacy: pharmacyDisplayName(settings?.pharmacy_name), logo: new Uint8Array(await image.arrayBuffer()), rif: pharmacyBrand.rif,
         address: settings?.address, phone: settings?.phone, period: "Fecha de operación " + day, issuedAt: displayDate(new Date().toISOString()),
-        coverage: (only === undefined ? entries.length + " de 3 cajas con cierre incluido. " : "") +
-          "Los equivalentes usan la tasa registrada en cada venta. El subtotal por producto se presenta antes de descuentos.",
-        summaryTitle: "Total vendido en los cierres incluidos",
+        register: { label: individual ? "CIERRE INDIVIDUAL" : "REPORTE DE ADMINISTRACIÓN", facts },
+        coverage: (individual && entries[0].changed ? "Este cierre tiene movimientos posteriores pendientes de incorporar. " : "") +
+          "Los equivalentes usan la tasa de cada venta. Los subtotales por producto se muestran antes de descuentos.",
+        summaryTitle: individual ? "Total vendido en la caja" : "Total vendido en las cajas incluidas",
         indicators: [
           { label: "VENTAS EN USD", value: equivalent(total("usd"), "USD") },
           { label: "EQUIVALENTE EN BS.", value: equivalent(total("ves"), "VES") },
@@ -159,7 +184,11 @@ export function Registers({ op, dashboard = false }: { op: Operation; dashboard?
         const summary = dashboard ? live : box.closure?.summary ?? live;
         return <section className="card stack" key={box.register_no}>
           <div className="section-title"><div><h3>Caja {box.register_no}</h3><p>{box.username ?? "Sin cajera asignada"}</p></div>
-            <span className={"pill " + (box.changed ? "warning" : box.closure ? "green" : "")}>{status(box)}</span></div>
+            <div className="actions">
+              <span className={"pill " + (box.changed ? "warning" : box.closure ? "green" : "")}>{status(box)}</span>
+              {!dashboard && box.closure && <Button variant={admin ? "outline" : "default"} disabled={busy}
+                onClick={() => void download(box.register_no)}><Download size={17} /> PDF de la caja</Button>}
+            </div></div>
           <div className="list-line"><span>Ventas / unidades</span><strong>{count.format(summary.sales)} / {count.format(summary.units)}</strong></div>
           <div className="list-line"><span>Total en USD</span><strong>{money(summary.usd)}</strong></div>
           <div className="list-line"><span>Equivalente en Bs.</span><strong>{equivalent(summary.ves, "VES")}</strong></div>
@@ -169,12 +198,12 @@ export function Registers({ op, dashboard = false }: { op: Operation; dashboard?
             {summary.products.map((p) => <div className="list-line" key={p.product_id + p.name}><span>{p.name}</span><strong>{count.format(p.units)}</strong></div>)}
           </details>}
           {!dashboard && <>
+            {!admin && !box.closure && !confirm && <p className="muted">El PDF estará disponible en esta tarjeta al confirmar el cierre.</p>}
             {box.closure && <p className="muted">Versión {box.closure.revision} · {displayDate(box.closure.closed_at)} · {box.closure.cashier_name}</p>}
             {box.changed && <Notice>Hay ventas sincronizadas o anulaciones posteriores al cierre. La cajera puede generar una nueva versión.</Notice>}
             <div className="actions">
               {!admin && (!box.closure || box.changed) && !confirm && <Button disabled={pending || op.connection !== "online" || busy}
                 onClick={() => setConfirm(true)}>{box.closure ? "Actualizar cierre" : "Cerrar caja"}</Button>}
-              {box.closure && <Button variant="outline" disabled={busy} onClick={() => void download(box.register_no)}><Download size={17} /> PDF de la caja</Button>}
             </div>
             {confirm && <div className="stack"><p>Confirma el cierre del {day} con {live.sales} ventas y {count.format(live.units)} unidades sincronizadas.</p>
               <div className="actions"><Button disabled={busy || pending || op.connection !== "online"} onClick={() => void close()}>Confirmar cierre</Button>

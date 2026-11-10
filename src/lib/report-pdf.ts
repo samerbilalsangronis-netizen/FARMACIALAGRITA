@@ -17,6 +17,7 @@ export type ReportPdf = {
   issuedAt: string;
   coverage?: string;
   summaryTitle?: string;
+  register?: { label: string; facts: { label: string; value: string }[] };
   indicators: { label: string; value: string }[];
   sections: ReportSection[];
 };
@@ -41,6 +42,7 @@ export function createReportPdf(report: ReportPdf) {
   const left = 16;
   const width = 178;
   const bottom = 278;
+  const register = report.register;
   let y = 0;
 
   const font = (size: number, color: string = colors.ink, bold = false) =>
@@ -52,7 +54,55 @@ export function createReportPdf(report: ReportPdf) {
     value.forEach((line, i) => doc.text(line, x, top + i * step, { align }));
   };
 
+  function registerHeader() {
+    if (!register) return;
+    font(21, colors.white, true);
+    const title = wrap(report.title, 108);
+    const periodY = 28 + (title.length - 1) * 8 + 7;
+    const bandHeight = Math.max(48, periodY + 9);
+    fill(0, 0, 210, bandHeight, colors.forest);
+    fill(0, 0, 210, 2, colors.teal);
+    font(8, colors.green, true);
+    doc.text(printable(register.label), left, 14);
+    font(21, colors.white, true);
+    lines(title, left, 28, 8);
+    font(10, colors.green);
+    doc.text(printable(report.period), left, periodY);
+
+    const logo = doc.getImageProperties(report.logo);
+    const logoWidth = 59;
+    const logoHeight = logoWidth * logo.height / logo.width;
+    const logoX = left + width - logoWidth;
+    doc.setFillColor(colors.white).roundedRect(logoX - 3, 9, logoWidth + 6, logoHeight + 6, 3, 3, "F");
+    doc.addImage(report.logo, "JPEG", logoX, 12, logoWidth, logoHeight);
+
+    y = bandHeight + 6;
+    font(9, colors.muted);
+    const contact = [report.pharmacy, "RIF " + report.rif, report.address, report.phone].filter(Boolean).join("  ·  ");
+    const contactLines = wrap(contact, width);
+    lines(contactLines, left, y + 3, 4);
+    y += contactLines.length * 4 + 6;
+
+    const factWidth = width / register.facts.length;
+    const factLines = register.facts.map(({ value }) => {
+      font(10, colors.forest, true);
+      return wrap(value, factWidth - 10);
+    });
+    const factHeight = 10 + Math.max(1, ...factLines.map((value) => value.length)) * 4;
+    doc.setFillColor(colors.pale).roundedRect(left, y, width, factHeight, 2, 2, "F");
+    register.facts.forEach(({ label }, index) => {
+      const x = left + factWidth * index;
+      if (index) doc.setDrawColor(colors.line).setLineWidth(0.2).line(x, y + 3, x, y + factHeight - 3);
+      font(8, colors.muted, true);
+      doc.text(printable(label), x + 4, y + 5.5);
+      font(10, colors.forest, true);
+      lines(factLines[index], x + 4, y + 11, 4);
+    });
+    y += factHeight + 8;
+  }
+
   function header(first: boolean) {
+    if (first && register) { registerHeader(); return; }
     if (first) {
       font(15, colors.white, true);
       const pharmacy = wrap(report.pharmacy, 95);
@@ -92,13 +142,18 @@ export function createReportPdf(report: ReportPdf) {
 
   function page() { doc.addPage(); header(false); }
 
-  function table(section: ReportSection) {
+  function table(section: ReportSection, index: number) {
     const heading = (continued = false) => {
+      if (register) {
+        doc.setFillColor(colors.mint).roundedRect(left, y - 1, 8, 7, 1.4, 1.4, "F");
+        font(8, colors.teal, true);
+        doc.text(String(index + 1).padStart(2, "0"), left + 4, y + 3.6, { align: "center" });
+      }
       font(13, colors.forest, true);
-      doc.text(printable(section.title + (continued ? " (continuación)" : "")), left, y + 4);
+      doc.text(printable(section.title + (continued ? " (continuación)" : "")), left + (register ? 11 : 0), y + 4);
       y += 8;
-      fill(left, y, width, 8, colors.forest);
-      font(8, colors.white, true);
+      fill(left, y, width, 8, register ? colors.mint : colors.forest);
+      font(8, register ? colors.forest : colors.white, true);
       let x = left;
       for (const column of section.columns) {
         doc.text(printable(column.label), column.align ? x + column.width - 3 : x + 3, y + 5.2,
@@ -112,7 +167,7 @@ export function createReportPdf(report: ReportPdf) {
       const cells = section.columns.map((column, i) => wrap(row[i] || "-", column.width - 6));
       return { cells, height: Math.max(8, Math.max(...cells.map((cell) => cell.length)) * 3.8 + 4) };
     };
-    const initialRows = section.rows.length <= 8 ? section.rows : section.rows.slice(0, 1);
+    const initialRows = register ? section.rows.slice(0, 2) : section.rows.length <= 8 ? section.rows : section.rows.slice(0, 1);
     const initialHeight = initialRows.length ? initialRows.reduce((height, row) => height + layout(row).height, 0) : 9;
     if (y + 16 + initialHeight > bottom) page();
     heading();
@@ -150,27 +205,34 @@ export function createReportPdf(report: ReportPdf) {
     const x = left + (index % 3) * (cardWidth + gap);
     const top = y + Math.floor(index / 3) * 25;
     const highlight = index === 0;
-    fill(x, top, cardWidth, 21, highlight ? colors.teal : colors.mint);
+    if (register) {
+      doc.setFillColor(highlight ? colors.forest : index === 1 ? colors.mint : "#EEF2FA")
+        .roundedRect(x, top, cardWidth, 21, 2, 2, "F");
+      fill(x + 3, top + 3, 0.9, 15, highlight ? "#5ED9E5" : index === 1 ? colors.teal : "#3868AB");
+    } else {
+      fill(x, top, cardWidth, 21, highlight ? colors.teal : colors.mint);
+    }
     font(8, highlight ? colors.white : colors.muted, true);
-    doc.text(printable(indicator.label), x + 4, top + 7);
+    const inset = register ? 6 : 4;
+    doc.text(printable(indicator.label), x + inset, top + 7);
     font(17, highlight ? colors.white : colors.forest, true);
     const value = printable(indicator.value);
     const valueWidth = doc.getTextWidth(value);
-    if (valueWidth > cardWidth - 8) doc.setFontSize(17 * (cardWidth - 8) / valueWidth);
-    doc.text(value, x + 4, top + 16);
+    if (valueWidth > cardWidth - inset - 4) doc.setFontSize(17 * (cardWidth - inset - 4) / valueWidth);
+    doc.text(value, x + inset, top + 16);
   }
   y += Math.ceil(report.indicators.length / 3) * 25 + 4;
 
   if (report.coverage) {
-    font(9, colors.amber);
+    font(9, register ? colors.muted : colors.amber);
     const note = wrap(report.coverage, width - 10);
     const height = 6 + note.length * 4;
-    fill(left, y, width, height, colors.sand);
+    fill(left, y, width, height, register ? colors.pale : colors.sand);
     lines(note, left + 5, y + 5.5, 4);
     y += height + 7;
   }
 
-  for (const section of report.sections) table(section);
+  report.sections.forEach(table);
 
   const pages = doc.getNumberOfPages();
   for (let current = 1; current <= pages; current++) {
