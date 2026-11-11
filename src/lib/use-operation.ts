@@ -373,6 +373,15 @@ export function useOperation() {
     };
   }, [profile, lock]);
 
+  async function invalidateShift(shift: string) {
+    await serialize(async () => {
+      const stored = session.current?.vault;
+      if (stored && stored.grant.shift_id === shift) {
+        await updateVault({ ...stored, grant: { ...stored.grant, shift_id: null, shift_required: true } });
+      }
+    });
+  }
+
   const wallClock = () => local ? adjustedNow(local) : Date.now();
   const customers = [...(local?.customers ?? remoteCustomers), ...(local?.pendingCustomers ?? [])]
     .sort((left, right) => left.name.localeCompare(right.name, "es"));
@@ -382,7 +391,7 @@ export function useOperation() {
     profile, catalog, local, connection, prepared, workerReady, syncProblem, historyTruncated, needsReconnect: Boolean(profile && !authenticated.current),
     receipts: [...merged.values()].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)),
     customers,
-    registerCustomer, login, prepare, queue, lock, sync, wallClock, loadMoreHistory,
+    registerCustomer, login, prepare, queue, lock, sync, wallClock, loadMoreHistory, invalidateShift,
   };
 }
 export type Operation = ReturnType<typeof useOperation>;

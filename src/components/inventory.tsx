@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useForm } from "react-hook-form";
 import { ArrowDownToLine, FileSpreadsheet, History, Plus, Search } from "lucide-react";
-import { displayDate, localDay, money, normalize, productFields, productSchema, type Product, type ProductField } from "@/lib/domain";
+import { decimal, displayDate, localDay, money, normalize, productFields, productSchema, type Product, type ProductField } from "@/lib/domain";
 import { exportTable } from "@/lib/export";
 import { initialMapping, readInventory, reviewInventory } from "@/lib/import-inventory";
 import { rpc, supabase } from "@/lib/supabase";
@@ -35,6 +35,11 @@ export function Inventory({ op }: { op: Operation }) {
   const admin = op.profile?.role === "admin";
   const online = op.connection === "online" || op.connection === "syncing" || (op.connection === "error" && Boolean(op.catalog));
   const products = op.catalog?.products ?? emptyProducts;
+  const totals = useMemo(() => products.reduce((sum, p) => {
+    const units = Math.max(0, p.stock);
+    return { units: sum.units + units, value: sum.value.plus(new decimal(p.price ?? 0).times(units)),
+      unpriced: sum.unpriced + (p.price === null ? units : 0), negative: sum.negative + (p.stock < 0 ? 1 : 0) };
+  }, { units: 0, value: new decimal(0), unpriced: 0, negative: 0 }), [products]);
   const expiryLimit = localDay(Date.now() + 30 * 86400000);
   const filtered = useMemo(() => {
     const search = normalize(query.trim());
@@ -58,27 +63,19 @@ export function Inventory({ op }: { op: Operation }) {
         <Button onClick={() => { setMode("list"); setEditing("new"); }}><Plus size={18} /> Nuevo producto</Button>
       </div>}
     </div>
+    {admin && <div className="stats-grid">
+      <section className="card stack"><span>Unidades en existencia</span><strong className="inventory-total-value">{new Intl.NumberFormat("es-VE").format(totals.units)}</strong><small>Todos los productos con saldo positivo, incluidos los inactivos.</small></section>
+      <section className="card stack"><span>Valor del inventario en USD</span><strong className="inventory-total-value">{money(totals.value.toFixed(2))}</strong><small>Existencias × precio de venta actual. Total general, independiente del filtro.</small>
+        {totals.unpriced > 0 && <Notice>{totals.unpriced} unidades sin precio están pendientes de valorar.</Notice>}
+        {totals.negative > 0 && <Notice>{totals.negative} productos con saldo negativo requieren conciliación y no suman existencias.</Notice>}
+      </section>
+    </div>}
     {message && <Notice success>{message}</Notice>}
     {error && <Notice>{error}</Notice>}
     {mode === "import" && admin && online ? <ImportWizard products={products} onDone={async () => { await op.sync(true); }} />
       : mode === "history" && admin && online ? <InventoryHistory /> : <>
         {editing === "new" && admin && <ProductForm online={online}
           onCancel={() => setEditing(null)} onSaved={refresh} />}
-        {adjusting && admin && online && <section className="card">
-          <h2>Ajustar existencias de {adjusting.name}</h2><p className="muted">Saldo registrado {adjusting.stock}. Usa una cantidad positiva para entradas y negativa para salidas.</p>
-          <form className="form-grid" onSubmit={async (event) => {
-            event.preventDefault();
-            const data = new FormData(event.currentTarget);
-            try {
-              await rpc("adjust_inventory", { product: adjusting.id, delta: Number(data.get("delta")), reason: String(data.get("reason")) });
-              await refresh("Movimiento guardado en el inventario.");
-            } catch (error) { setError(accessError(error)); }
-          }}>
-            <Field label="Cantidad de ajuste"><input name="delta" type="number" step="1" required /></Field>
-            <Field label="Motivo"><input name="reason" required minLength={3} maxLength={500} /></Field>
-            <div className="actions"><Button type="submit">Registrar ajuste</Button><Button variant="ghost" onClick={() => setAdjusting(null)}>Cancelar</Button></div>
-          </form>
-        </section>}
         <section className="card">
           <div className="toolbar">
             <div className="search"><Search size={17} /><input aria-label="Filtrar inventario" placeholder="Buscar producto o código…" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} /></div>
@@ -91,12 +88,13 @@ export function Inventory({ op }: { op: Operation }) {
             <thead>{table.getHeaderGroups().map((group) => <tr key={group.id}>{group.headers.map((head) => <th key={head.id}>{flexRender(head.column.columnDef.header, head.getContext())}</th>)}{admin && online && <th>Acciones</th>}</tr>)}</thead>
             <tbody>{table.getRowModel().rows.map((row) => {
               const isEditing = editing !== "new" && editing?.id === row.original.id;
+              const isAdjusting = adjusting?.id === row.original.id;
               return <Fragment key={row.original.id}>
-                <tr className={isEditing ? "inventory-editing" : undefined}>
+                <tr className={isEditing || isAdjusting ? "inventory-editing" : undefined}>
                   {row.getVisibleCells().map((cell) => <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}
                   {admin && online && <td><div className="actions">
                     <Button variant="ghost" aria-expanded={isEditing} onClick={() => { setEditing(isEditing ? null : row.original); setAdjusting(null); }}>Editar</Button>
-                    <Button variant="ghost" onClick={() => { setAdjusting(row.original); setEditing(null); }}>Ajustar</Button>
+                    <Button variant="ghost" aria-expanded={isAdjusting} onClick={() => { setAdjusting(isAdjusting ? null : row.original); setEditing(null); }}>Ajustar</Button>
                   </div></td>}
                 </tr>
                 {isEditing && editing && admin && <tr className="inventory-editing">
@@ -104,6 +102,9 @@ export function Inventory({ op }: { op: Operation }) {
                     <ProductForm product={editing} online={online} onCancel={() => setEditing(null)} onSaved={refresh} />
                   </td>
                 </tr>}
+                {isAdjusting && adjusting && admin && <tr className="inventory-editing"><td colSpan={columns.length + (online ? 1 : 0)}>
+                  <InventoryAdjustment product={adjusting} online={online} onCancel={() => setAdjusting(null)} onSaved={refresh} />
+                </td></tr>}
               </Fragment>;
             })}</tbody>
           </table></div>}
@@ -111,6 +112,34 @@ export function Inventory({ op }: { op: Operation }) {
         </section>
       </>}
   </>;
+}
+
+function InventoryAdjustment({ product, online, onSaved, onCancel }: { product: Product; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
+  const title = useRef<HTMLHeadingElement>(null);
+  const saving = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { title.current?.focus({ preventScroll: true }); title.current?.scrollIntoView({ block: "nearest" }); }, []);
+  return <section className="card stack inventory-editor">
+    <h2 tabIndex={-1} ref={title}>Ajustar existencias de {product.name}</h2>
+    <p className="muted">Saldo registrado {product.stock}. Usa una cantidad positiva para entradas y negativa para salidas.</p>
+    {!online && <Notice>Conéctate a internet para guardar este ajuste.</Notice>}
+    {error && <Notice>{error}</Notice>}
+    <form className="form-grid" onSubmit={async (event) => {
+      event.preventDefault(); if (!online || saving.current) return;
+      const data = new FormData(event.currentTarget);
+      const delta = Number(data.get("delta"));
+      if (!Number.isSafeInteger(delta) || delta === 0) { setError("Indica una cantidad entera distinta de cero."); return; }
+      saving.current = true; setBusy(true); setError("");
+      try { await rpc("adjust_inventory", { product: product.id, delta, reason: String(data.get("reason")) }); await onSaved("Movimiento guardado en el inventario."); }
+      catch (error) { setError(accessError(error)); }
+      finally { saving.current = false; setBusy(false); }
+    }}>
+      <Field label="Cantidad de ajuste"><input name="delta" type="number" step="1" required /></Field>
+      <Field label="Motivo"><input name="reason" required minLength={3} maxLength={500} /></Field>
+      <div className="actions"><Button type="submit" disabled={!online || busy}>{busy ? "Guardando…" : "Registrar ajuste"}</Button><Button variant="ghost" disabled={busy} onClick={onCancel}>Cancelar</Button></div>
+    </form>
+  </section>;
 }
 
 function ProductForm({ product, online, onSaved, onCancel }: { product?: Product; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {

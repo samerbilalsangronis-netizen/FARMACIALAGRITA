@@ -24,7 +24,7 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
     insert into auth.users values ('${admin}','admin@prueba.local'),('${first}','cajera1@prueba.local'),
       ('${second}','cajera2@prueba.local'),('${third}','cajera3@prueba.local'),('${unmanaged}',null);
   `);
-  for (const name of (await readdir(file)).sort()) await db.exec(await readFile(new URL(name, file), "utf8"));
+  for (const name of (await readdir(file)).filter((name) => !name.includes("007")).sort()) await db.exec(await readFile(new URL(name, file), "utf8"));
   await db.exec(`insert into public.profiles(id,username,role) values ('${admin}','admin','admin')`);
   const configure = (await readFile(new URL("../supabase/configurar_cajas.sql", import.meta.url), "utf8"))
     .replace("= '';", "= 'prueba.local';");
@@ -146,6 +146,11 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
   await assert.rejects(rpc("public.catalog()"), /permission denied/);
 
   await db.exec("reset role");
+  const beforeUpgrade = await rpc("(select jsonb_agg(to_jsonb(p) order by id) from public.products p)");
+  await db.exec(await readFile(new URL("202611110007_turnos.sql",file),"utf8"));
+  assert.deepEqual(await rpc("(select jsonb_agg(to_jsonb(p) order by id) from public.products p)"), beforeUpgrade);
+  assert.equal(await rpc("(select count(*)::integer from public.sales)"),2);
+  assert.equal(await rpc("(select count(*)::integer from public.register_closures)"),4);
   const cleanup = await readFile(new URL("../supabase/limpieza_preentrega.sql", import.meta.url), "utf8");
   await db.exec(cleanup);
   assert.equal(await rpc("(select count(*)::integer from public.sales)"), 2);

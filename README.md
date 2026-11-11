@@ -61,10 +61,20 @@ El archivo [limpieza_preentrega.sql](supabase/limpieza_preentrega.sql) se ejecut
 
 ## Tres cajas y cierres diarios
 
-1. En una base de prueba, aplica las migraciones en orden hasta `202611100006_cajas.sql`.
+1. En una base de prueba, aplica las migraciones en orden hasta `202611110007_turnos.sql`.
 2. En **Authentication → Users**, crea `cajera1`, `cajera2` y `cajera3` con el mismo dominio de acceso que usa FarmaWorld. Confirma los correos desde el panel y asigna una contraseña distinta a cada cuenta.
 3. Escribe el dominio en `supabase/configurar_cajas.sql` y ejecútalo desde SQL Editor. El script vincula las cuentas a las cajas 1, 2 y 3. Cada cajera entra con su nombre de usuario y prepara su propio equipo para vender sin conexión.
-4. Al final del día, sincroniza las ventas en cada equipo y abre **Cierres diarios**. La cajera confirma su cierre y puede descargar su PDF. Administración consulta los tres cierres y descarga el PDF consolidado. La fecha corresponde a la hora de Venezuela.
+4. En **Cierres diarios**, cada cajera pulsa **Iniciar turno** con conexión y prepara o actualiza su dispositivo. Al terminar, sincroniza las ventas y pulsa **Cerrar turno**. Puede abrir otro turno el mismo día. El turno continúa después de medianoche hasta cerrarlo; su fecha de reporte es la de apertura en Venezuela. Cada turno tiene PDF propio y administración descarga un consolidado de los turnos cerrados de las tres cajas, sin repetir ventas. El dashboard conserva las ventas por fecha calendario.
 5. El resumen por caja agrupa las ventas sincronizadas a partir de la asignación. Los equivalentes usan la tasa registrada en cada venta. Los cobros netos se muestran por moneda y método. Las ventas tardías y anulaciones posteriores aparecen como cambios pendientes de incorporar. La cajera puede emitir una nueva versión del cierre sin perder la anterior.
 
 Para producción, aplica primero la migración durante la ventana acordada, vincula las tres cuentas y publica la versión de la app después de comprobar que el servidor responde. Si usas Vercel Preview, configura allí las variables de una base de prueba.
+
+## Activar turnos en una farmacia que ya está trabajando
+
+Publica esta versión; sin 007 la app conserva los cierres anteriores. Antes de aplicar **solo** `supabase/migrations/202611110007_turnos.sql`, sincroniza todos los equipos y termina la jornada anterior. El SQL agrega tablas, columnas y funciones de turnos: no actualiza ni elimina productos, precios, existencias, clientes ni ventas. No ejecutes de nuevo las migraciones antiguas ni el script de limpieza.
+
+Después de ejecutar 007, recarga la aplicación en cada equipo, abre **Cierres diarios**, inicia el turno de su cajera y actualiza/prepara el dispositivo. Abrir, cerrar y consultar cierres requiere conexión. Un dispositivo previamente preparado permite vender sin red dentro de su turno y de la vigencia de su autorización. Antes de cerrar, sincroniza todos los equipos de esa caja. Las ventas tardías anteriores al cierre conservan su turno y señalan una actualización pendiente; las ventas registradas después del fin con una autorización vieja quedan pendientes de revisión y no se asignan a otro turno.
+
+El historial anterior permanece en **Consultar cierres diarios anteriores al cambio**. Los turnos nuevos se consultan por fecha de apertura; un turno 22:00–06:00 pertenece al día en que abrió. El consolidado incluye la última versión guardada de cada turno cerrado y advierte si hay turnos abiertos o cambios pendientes.
+
+Los indicadores administrativos de inventario suman las unidades con saldo positivo de todo el catálogo, incluidos productos inactivos. El valor en USD usa el precio de venta vigente y excluye las unidades sin precio, que se muestran como pendientes de valorar. Los saldos negativos se señalan para conciliación. Los filtros y la paginación no cambian estos totales. Editar y ajustar se abren debajo del producto; guardar requiere conexión y permiso de administrador.

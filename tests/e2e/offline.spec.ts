@@ -36,7 +36,7 @@ test("registra cliente y venta offline, reabre la PWA y sincroniza una sola vez"
     if (path === "/rest/v1/profiles") result = profile;
     if (path.endsWith("/rpc/catalog")) result = catalog;
     if (path.endsWith("/rpc/authorize_device")) result = {
-      id: crypto.randomUUID(), cashier_id: userId, issued_at: new Date().toISOString(),
+      id: crypto.randomUUID(), shift_required: true, shift_id: "44444444-4444-4444-8444-444444444444", cashier_id: userId, issued_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 86400000).toISOString(), rate_hours: 24, stale_policy: "confirm", catalog,
     };
     if (path === "/rest/v1/customers") {
@@ -156,6 +156,7 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   const currentCatalog = { ...catalog, products: [...catalog.products] };
   let holdSync: Promise<void> | undefined;
   let saveCount = 0;
+  let adjustmentCount = 0;
   await context.route("**/api/login", (route) =>
     route.fulfill({ json: { access_token: jwt, refresh_token: "refresh-fixture" } }));
   await context.route("https://supabase-fixture.example.com/**", async (route) => {
@@ -171,6 +172,11 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
         id: crypto.randomUUID(), cashier_id: userId, issued_at: new Date().toISOString(),
         expires_at: new Date(Date.now() + 86400000).toISOString(), rate_hours: 24, stale_policy: "confirm", catalog: currentCatalog,
       };
+    }
+    if (path.endsWith("/rpc/adjust_inventory")) {
+      const { product, delta, reason } = request.postDataJSON();
+      expect(reason).toBe("Conteo físico de prueba"); expect(delta).toBe(2); adjustmentCount++;
+      currentCatalog.products.find((p) => p.id === product)!.stock += delta;
     }
     if (path.endsWith("/rpc/save_product")) {
       const { data, expected } = request.postDataJSON();
@@ -241,6 +247,20 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   await editor.getByRole("button", { name: "Guardar producto" }).click();
   await expect(row).toContainText("4,25");
   expect(saveCount).toBe(2);
+  const totalUnits = page.getByText("Unidades en existencia", {exact:true}).locator("..");
+  const valuation = page.getByText("Valor del inventario en USD", {exact:true}).locator("..");
+  await expect(totalUnits).toContainText("11"); await expect(valuation).toContainText("49,00");
+  await page.getByLabel("Filtrar inventario").fill("PRUEBA-001");
+  await expect(totalUnits).toContainText("11"); await expect(valuation).toContainText("49,00");
+  await row.getByRole("button", {name:"Ajustar",exact:true}).click();
+  const adjustment = row.locator("xpath=following-sibling::tr[1]");
+  await expect(adjustment.getByRole("heading",{name:"Ajustar existencias de Producto nuevo"})).toBeFocused();
+  await adjustment.getByLabel("Cantidad de ajuste").fill("2");
+  await adjustment.getByLabel("Motivo",{exact:true}).fill("Conteo físico de prueba");
+  await adjustment.getByRole("button",{name:"Registrar ajuste"}).click();
+  await expect(page.getByText("Movimiento guardado en el inventario.",{exact:true})).toBeVisible();
+  expect(adjustmentCount).toBe(1);
+  await expect(totalUnits).toContainText("13"); await expect(valuation).toContainText("57,50");
 });
 
 test("cada cajera cierra su caja y la administración descarga los tres cierres", async ({ browser }, testInfo) => {
@@ -257,6 +277,9 @@ test("cada cajera cierra su caja y la administración descarga los tres cierres"
       await context.route("**/api/login", (route) => route.fulfill({ json: { access_token: jwt, refresh_token: "refresh-fixture" } }));
       await context.route("https://supabase-fixture.example.com/**", async (route) => {
         const path = new URL(route.request().url()).pathname;
+        if (path.endsWith("/rpc/register_shift_day")) {
+          await route.fulfill({status:404,json:{message:"Could not find the function public.register_shift_day in the schema cache"}}); return;
+        }
         let result: unknown = [];
         if (path === "/auth/v1/user") result = { user };
         if (path === "/rest/v1/profiles") result = { ...profile, role };
@@ -308,4 +331,69 @@ test("cada cajera cierra su caja y la administración descarga los tres cierres"
     }
   }
   expect(closeCount).toBe(1);
+});
+
+test("abre dos turnos, bloquea ventas sin turno y descarga cierres con horario completo", async ({ context, page }, testInfo) => {
+  const shifts: { id: string; register_no: number; cashier_name: string; business_day: string; started_at: string; ended_at: string | null; summary: object; closure: object | null; changed: boolean }[] = [];
+  const summary = {sales:1,units:2,usd:5,ves:1250,cop:20000,without_rate:0,discounts:0,products:[{product_id:productId,name:"Acetaminofén",units:2,subtotal:5}],payments:[{currency:"USD",method:"cash",net:5}]};
+  const day = new Date().toLocaleDateString("en-CA",{timeZone:"America/Caracas"});
+  let grantNumber = 0;
+  await context.route("**/api/login",(r)=>r.fulfill({json:{access_token:jwt,refresh_token:"refresh-fixture"}}));
+  await context.route("https://supabase-fixture.example.com/**",async(route)=>{
+    const request=route.request(); const path=new URL(request.url()).pathname; let result:unknown=[];
+    if(path==="/auth/v1/user") result={user};
+    if(path==="/rest/v1/profiles") result=profile;
+    if(path.endsWith("/rpc/catalog")) result=catalog;
+    if(path.endsWith("/rpc/register_shift_day")) result=shifts;
+    if(path.endsWith("/rpc/authorize_device")) result={id:"grant-"+(++grantNumber),cashier_id:userId,issued_at:new Date().toISOString(),expires_at:new Date(Date.now()+86400000).toISOString(),rate_hours:24,stale_policy:"confirm",catalog,shift_required:true,shift_id:shifts.find(s=>!s.ended_at)?.id??null};
+    if(path.endsWith("/rpc/open_register_shift")) {
+      const {request_id}=request.postDataJSON();
+      shifts.push({id:request_id,register_no:3,cashier_name:"caja3",business_day:day,started_at:new Date().toISOString(),ended_at:null,summary,closure:null,changed:false}); result=request_id;
+    }
+    if(path.endsWith("/rpc/close_register_shift")) {
+      const {shift}=request.postDataJSON(); const row=shifts.find(s=>s.id===shift)!;
+      row.ended_at=new Date().toISOString(); row.closure={revision:1,closed_at:row.ended_at,summary}; result=1;
+    }
+    await route.fulfill({json:result});
+  });
+  await page.goto("/"); await page.getByLabel("Nombre de usuario").fill("caja3"); await page.getByLabel("Contraseña").fill("fixture"); await page.getByRole("button",{name:"Ingresar",exact:true}).click();
+  await page.getByRole("button",{name:"Preparar dispositivo",exact:true}).click();
+  await page.getByLabel("Clave del dispositivo",{exact:true}).fill("clave de dispositivo prueba"); await page.getByLabel("Confirmar clave").fill("clave de dispositivo prueba"); await page.getByRole("button",{name:"Autorizar dispositivo"}).click();
+  await expect(page.getByText("Dispositivo preparado",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Punto de venta",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Ir a Cierres diarios"})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Confirmar venta",exact:true})).toBeDisabled();
+  await page.getByRole("button",{name:"Ir a Cierres diarios"}).click();
+  await page.getByRole("button",{name:"Iniciar turno",exact:true}).click();
+  await expect(page.getByText("Turno abierto",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Cerrar turno",exact:true}).click(); await page.getByRole("button",{name:"Confirmar cierre",exact:true}).click();
+  await expect(page.getByText("Turno cerrado",{exact:true})).toHaveCount(1);
+  await page.getByRole("button",{name:"Punto de venta",exact:true}).click(); await expect(page.getByRole("button",{name:"Ir a Cierres diarios"})).toBeVisible();
+  await page.getByRole("button",{name:"Ir a Cierres diarios"}).click(); await page.getByRole("button",{name:"Iniciar turno",exact:true}).click();
+  await page.getByRole("button",{name:"Cerrar turno",exact:true}).click(); await page.getByRole("button",{name:"Confirmar cierre",exact:true}).click();
+  await expect(page.getByText("Turno cerrado",{exact:true})).toHaveCount(2);
+  const downloading=page.waitForEvent("download"); await page.getByRole("button",{name:"PDF del turno",exact:true}).last().click(); const download=await downloading;
+  await download.saveAs(testInfo.outputPath("cierre-turno.pdf"));
+  await page.screenshot({path:testInfo.outputPath("turnos.png"),fullPage:true});
+  expect(shifts).toHaveLength(2); expect(shifts.every(s=>s.closure)).toBe(true);
+});
+
+test("administración descarga un consolidado de seis turnos de tres cajas",async({context,page},testInfo)=>{
+  const day=new Date().toLocaleDateString("en-CA",{timeZone:"America/Caracas"});
+  const summary={sales:1,units:2,usd:5,ves:1250,cop:20000,without_rate:0,discounts:0,products:[{product_id:productId,name:"Acetaminofén",units:2,subtotal:5}],payments:[{currency:"USD",method:"cash",net:5}]};
+  const shifts=[1,2,3].flatMap(n=>[0,1].map(i=>({id:crypto.randomUUID(),register_no:n,cashier_name:"caja"+n,business_day:day,started_at:day+(i?"T18:00:00-04:00":"T08:00:00-04:00"),ended_at:day+(i?"T23:00:00-04:00":"T12:00:00-04:00"),summary,closure:{revision:1,closed_at:issuedAt,summary},changed:false})));
+  await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
+  await context.route("https://supabase-fixture.example.com/**",async r=>{
+    const path=new URL(r.request().url()).pathname; let result:unknown=[];
+    if(path==="/auth/v1/user") result={user};
+    if(path==="/rest/v1/profiles") result={...profile,role:"admin"};
+    if(path.endsWith("/rpc/catalog")) result=catalog;
+    if(path.endsWith("/rpc/register_shift_day")) result=shifts;
+    await r.fulfill({json:result});
+  });
+  await page.goto("/"); await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
+  await page.getByRole("button",{name:"Cierres diarios",exact:true}).click();await expect(page.getByText("Turno cerrado",{exact:true})).toHaveCount(6);
+  await expect(page.getByRole("button",{name:"Cerrar turno",exact:true})).toHaveCount(0);
+  const downloading=page.waitForEvent("download");await page.getByRole("button",{name:"PDF consolidado de turnos"}).click();const download=await downloading;
+  await download.saveAs(testInfo.outputPath("consolidado-seis-turnos.pdf"));
 });

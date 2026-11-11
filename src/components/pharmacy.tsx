@@ -10,7 +10,7 @@ import { Inventory } from "./inventory";
 import { Sales } from "./sales";
 import { ReceiptView, Records, Reports, summarize } from "./records";
 import { Customers, Settings } from "./admin";
-import { Registers } from "./registers";
+import { Registers } from "./shift-registers";
 import { Button } from "./ui/button";
 import { Brand, Field, Heading, Notice } from "./ui/shared";
 
@@ -95,7 +95,7 @@ export function Pharmacy() {
         {op.syncProblem && <Notice>{op.syncProblem}</Notice>}
         <motion.div key={current} className="view" initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
           {current === "dashboard" && <Dashboard op={op} open={change} />}
-          {current === "sales" && <Sales op={op} onReceipt={setReceipt} onPrepareDevice={openDeviceSetup} />}
+          {current === "sales" && <Sales op={op} onReceipt={setReceipt} onPrepareDevice={openDeviceSetup} onOpenRegisters={() => change("registers")} />}
           {current === "inventory" && <Inventory op={op} />}
           {current === "history" && <Records op={op} onReceipt={setReceipt} />}
           {current === "customers" && <Customers op={op} />}

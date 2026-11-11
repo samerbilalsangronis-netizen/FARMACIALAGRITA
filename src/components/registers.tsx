@@ -10,7 +10,7 @@ import { accessError, type Operation } from "@/lib/use-operation";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
-type Summary = {
+export type Summary = {
   sales: number;
   units: number;
   usd: number;
@@ -33,7 +33,7 @@ function status(box: Register) {
   return box.username ? "Pendiente de cierre" : "Sin cajera asignada";
 }
 
-export function Registers({ op, dashboard = false }: { op: Operation; dashboard?: boolean }) {
+export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op: Operation; dashboard?: boolean; readOnly?: boolean }) {
   const admin = op.profile?.role === "admin";
   const [today, setToday] = useState(() => localDay());
   const [date, setDate] = useState(today);
@@ -185,7 +185,7 @@ export function Registers({ op, dashboard = false }: { op: Operation; dashboard?
         return <section className="card stack" key={box.register_no}>
           <div className="section-title"><div><h3>Caja {box.register_no}</h3><p>{box.username ?? "Sin cajera asignada"}</p></div>
             <div className="actions">
-              <span className={"pill " + (box.changed ? "warning" : box.closure ? "green" : "")}>{status(box)}</span>
+              <span className={"pill " + (box.changed ? "warning" : box.closure ? "green" : "")}>{dashboard ? "Ventas del día" : status(box)}</span>
               {!dashboard && box.closure && <Button variant={admin ? "outline" : "default"} disabled={busy}
                 onClick={() => void download(box.register_no)}><Download size={17} /> PDF de la caja</Button>}
             </div></div>
@@ -202,7 +202,7 @@ export function Registers({ op, dashboard = false }: { op: Operation; dashboard?
             {box.closure && <p className="muted">Versión {box.closure.revision} · {displayDate(box.closure.closed_at)} · {box.closure.cashier_name}</p>}
             {box.changed && <Notice>Hay ventas sincronizadas o anulaciones posteriores al cierre. La cajera puede generar una nueva versión.</Notice>}
             <div className="actions">
-              {!admin && (!box.closure || box.changed) && !confirm && <Button disabled={pending || op.connection !== "online" || busy}
+              {!admin && !readOnly && (!box.closure || box.changed) && !confirm && <Button disabled={pending || op.connection !== "online" || busy}
                 onClick={() => setConfirm(true)}>{box.closure ? "Actualizar cierre" : "Cerrar caja"}</Button>}
             </div>
             {confirm && <div className="stack"><p>Confirma el cierre del {day} con {live.sales} ventas y {count.format(live.units)} unidades sincronizadas.</p>

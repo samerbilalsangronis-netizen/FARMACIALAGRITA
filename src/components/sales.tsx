@@ -13,10 +13,11 @@ const displayPayment = (amount: string, currency: Currency) =>
 
 const payment = (): Payment => ({ currency: "USD", method: "cash", amount: "", change_amount: "0" });
 
-export function Sales({ op, onReceipt, onPrepareDevice }: {
+export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
   op: Operation;
   onReceipt: (receipt: Receipt) => void;
   onPrepareDevice: () => void;
+  onOpenRegisters: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -34,6 +35,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
   const draft = useRef<QueuedSale | null>(null);
   const submitting = useRef(false);
   const local = op.local;
+  const needsShift = Boolean(local?.grant.shift_required && !local.grant.shift_id);
   const customerSearch = normalize(customerQuery.trim());
   const customerMatches = op.customers.filter((row) => normalize(row.name + " " + row.document).includes(customerSearch));
   const snapshot = local?.grant.catalog ?? op.catalog;
@@ -98,6 +100,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
     setBusy(true);
     try {
       if (!local || localExpired || !op.profile) throw new Error("Prepara o renueva el acceso del dispositivo para vender.");
+      if (needsShift) throw new Error("Inicia tu turno en Cierres diarios y actualiza el dispositivo antes de vender.");
       if (invalidDiscount) throw new Error("Revisa el descuento en USD.");
       if (!lines.length || invalidCart) throw new Error("Revisa los productos y las existencias disponibles.");
       if (foreign && !rate) throw new Error("Configura las tasas para cobrar en VES o COP.");
@@ -143,6 +146,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
 
   return <>
     <Heading label="OPERACIÓN" title="Punto de venta">Busca los medicamentos, registra el cobro y guarda el comprobante interno.</Heading>
+    {needsShift && <Notice>Inicia tu turno antes de registrar ventas. <Button variant="outline" onClick={onOpenRegisters}>Ir a Cierres diarios</Button></Notice>}
     {localExpired && <Notice>La autorización de este dispositivo venció. Renueva el acceso con conexión.</Notice>}
     {error && <Notice>{error}</Notice>}
     <div className="checkout">
@@ -271,7 +275,7 @@ export function Sales({ op, onReceipt, onPrepareDevice }: {
             {op.prepared ? "Desbloquear este dispositivo" : "Preparar este dispositivo"}
           </Button>
         </>}
-        <Button className="full" disabled={busy || savingCustomer || !local || localExpired || invalidCart || invalidDiscount || !lines.length} onClick={() => void confirm()}>
+        <Button className="full" disabled={needsShift || busy || savingCustomer || !local || localExpired || invalidCart || invalidDiscount || !lines.length} onClick={() => void confirm()}>
           <Check size={18} /> {busy ? "Guardando…" : "Confirmar venta"}
         </Button>
       </section>
