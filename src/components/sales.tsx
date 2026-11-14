@@ -39,6 +39,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
   const customerSearch = normalize(customerQuery.trim());
   const customerMatches = op.customers.filter((row) => normalize(row.name + " " + row.document).includes(customerSearch));
   const snapshot = local?.grant.catalog ?? op.catalog;
+  const stockTracking = (op.catalog ?? snapshot)?.settings.stock_tracking !== false;
   const products = useMemo(() => {
     const deductions = new Map<string, number>();
     for (const sale of local?.sales ?? []) {
@@ -48,8 +49,8 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
       }
     }
     return (snapshot?.products ?? []).filter((p): p is Product & { price: number; price_id: string } => p.active && p.price !== null && p.price_id !== null)
-      .map((p) => ({ ...p, stock: p.stock - (deductions.get(p.id) ?? 0) }));
-  }, [local, snapshot]);
+      .map((p) => ({ ...p, stock: stockTracking ? p.stock - (deductions.get(p.id) ?? 0) : p.stock }));
+  }, [local, snapshot, stockTracking]);
   const search = normalize(query.trim());
   const shown = products.filter((p) => normalize([p.name, p.code, p.barcode, p.ingredient].join(" ")).includes(search));
   const lines = products.filter((p) => cart[p.id]).map((p) => ({ ...p, quantity: cart[p.id] }));
@@ -63,7 +64,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
   const stale = Boolean(rate && local && op.wallClock() - Date.parse(rate.created_at) > local.grant.rate_hours * 3_600_000);
   const foreign = payments.some((p) => p.currency !== "USD");
   const localExpired = local ? expired(local) : false;
-  const invalidCart = Object.keys(cart).length !== lines.length || lines.some((p) => p.stock < p.quantity);
+  const invalidCart = Object.keys(cart).length !== lines.length || lines.some((p) => p.quantity > 10000 || (stockTracking && p.stock < p.quantity));
   const paymentValues = payments.map((line) => {
     try { return new decimal(paymentValue(line, rate).usd); } catch { return new decimal(0); }
   });
@@ -79,7 +80,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
 
   function change(p: Product, delta: number) {
     const quantity = (cart[p.id] ?? 0) + delta;
-    if (delta > 0 && quantity > p.stock) return;
+    if (delta > 0 && (quantity > 10000 || (stockTracking && quantity > p.stock))) return;
     draft.current = null;
     setCart((previous) => {
       const next = { ...previous };
@@ -102,7 +103,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
       if (!local || localExpired || !op.profile) throw new Error("Prepara o renueva el acceso del dispositivo para vender.");
       if (needsShift) throw new Error("Inicia tu turno en Cierres diarios y actualiza el dispositivo antes de vender.");
       if (invalidDiscount) throw new Error("Revisa el descuento en USD.");
-      if (!lines.length || invalidCart) throw new Error("Revisa los productos y las existencias disponibles.");
+      if (!lines.length || invalidCart) throw new Error("Revisa los productos, precios y cantidades de la venta.");
       if (foreign && !rate) throw new Error("Configura las tasas para cobrar en VES o COP.");
       if (foreign && stale && (local.grant.stale_policy === "block" || !staleConfirmed)) {
         throw new Error("Revisa la vigencia de la tasa antes de confirmar.");
@@ -163,8 +164,8 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
         <div className="product-list">
           {shown.slice(0, 50).map((p) => <div className="product-row" key={p.id}>
             <div><strong>{p.name}</strong><small>{[p.code, p.presentation, p.strength].filter(Boolean).join(" · ")}</small></div>
-            <div className="product-price"><strong>{money(p.price)}</strong><small>{Math.max(0, p.stock)} disponibles</small></div>
-            <Button aria-label={"Añadir " + p.name} variant="outline" className="icon-button" disabled={busy || p.stock <= (cart[p.id] ?? 0)} onClick={() => change(p, 1)}><Plus size={18} /></Button>
+            <div className="product-price"><strong>{money(p.price)}</strong>{stockTracking && <small>{Math.max(0, p.stock)} disponibles</small>}</div>
+            <Button aria-label={"Añadir " + p.name} variant="outline" className="icon-button" disabled={busy || (cart[p.id] ?? 0) >= 10000 || (stockTracking && p.stock <= (cart[p.id] ?? 0))} onClick={() => change(p, 1)}><Plus size={18} /></Button>
           </div>)}
         </div>
         {shown.length > 50 && <p className="muted">Se muestran 50 resultados. Refina la búsqueda para ver otros productos.</p>}
@@ -177,11 +178,11 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
           <div className="quantity">
             <Button aria-label={"Quitar una unidad de " + p.name} className="icon-button" variant="ghost" disabled={busy} onClick={() => change(p, -1)}><CircleMinus size={18} /></Button>
             {p.quantity}
-            <Button aria-label={"Agregar una unidad de " + p.name} className="icon-button" variant="ghost" disabled={busy || p.stock <= p.quantity} onClick={() => change(p, 1)}><Plus size={18} /></Button>
+            <Button aria-label={"Agregar una unidad de " + p.name} className="icon-button" variant="ghost" disabled={busy || p.quantity >= 10000 || (stockTracking && p.stock <= p.quantity)} onClick={() => change(p, 1)}><Plus size={18} /></Button>
           </div>
           <strong>{cartPrice(new decimal(p.price).times(p.quantity).toFixed(2))}</strong>
         </div>)}
-        {invalidCart && <Notice>El catálogo cambió. Retira las cantidades sin stock o vacía el carrito.</Notice>}
+        {invalidCart && <Notice>El catálogo cambió. Revisa los productos y cantidades o vacía el carrito.</Notice>}
         {!!Object.keys(cart).length && <Button variant="ghost" disabled={busy} onClick={() => { draft.current = null; setCart({}); }}>Vaciar carrito</Button>}
         {op.profile?.role === "admin" && lines.length > 0 && <Field label="Descuento autorizado en USD"><input value={discountInput} disabled={busy} inputMode="decimal" onChange={(e) => {
           draft.current = null; setDiscountInput(e.target.value.replace(",", "."));

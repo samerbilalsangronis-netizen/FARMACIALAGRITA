@@ -35,6 +35,9 @@ export function Inventory({ op }: { op: Operation }) {
   const admin = op.profile?.role === "admin";
   const online = op.connection === "online" || op.connection === "syncing" || (op.connection === "error" && Boolean(op.catalog));
   const products = op.catalog?.products ?? emptyProducts;
+  const stockTracking = op.catalog?.settings.stock_tracking !== false;
+  const tableColumns = useMemo(() => columns.filter((c) => stockTracking || c.accessorKey !== "stock"), [stockTracking]);
+  const exportFields = productFields.filter(([key]) => stockTracking || !["stock", "min_stock"].includes(key));
   const totals = useMemo(() => products.reduce((sum, p) => {
     const units = Math.max(0, p.stock);
     return { units: sum.units + units, value: sum.value.plus(new decimal(p.price ?? 0).times(units)),
@@ -50,39 +53,40 @@ export function Inventory({ op }: { op: Operation }) {
   const index = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
   const visibleProducts = useMemo(() => filtered.slice(index * 25, index * 25 + 25), [filtered, index]);
   const table = useReactTable({
-    data: visibleProducts, columns, getCoreRowModel: coreRowModel, autoResetPageIndex: false,
+    data: visibleProducts, columns: tableColumns, getCoreRowModel: coreRowModel, autoResetPageIndex: false,
   });
 
   async function refresh(text: string) { setMessage(text); setError(""); setEditing(null); setAdjusting(null); await op.sync(true); }
 
   return <>
-    <div className="top-actions"><Heading label="CATÁLOGO" title="Inventario de medicamentos">Consulta existencias, agrega productos o carga un inventario desde un archivo.</Heading>
+    <div className="top-actions"><Heading label="CATÁLOGO" title="Inventario de medicamentos">Consulta el catálogo, actualiza precios o agrega productos desde un archivo.</Heading>
       {admin && online && <div className="actions">
         <Button variant="outline" onClick={() => setMode(mode === "history" ? "list" : "history")}><History size={17} /> Historial</Button>
         <Button variant="outline" onClick={() => setMode(mode === "import" ? "list" : "import")}><FileSpreadsheet size={17} /> Importar archivo</Button>
         <Button onClick={() => { setMode("list"); setEditing("new"); }}><Plus size={18} /> Nuevo producto</Button>
       </div>}
     </div>
-    {admin && <div className="stats-grid">
+    {admin && stockTracking && <div className="stats-grid">
       <section className="card stack"><span>Unidades en existencia</span><strong className="inventory-total-value">{new Intl.NumberFormat("es-VE").format(totals.units)}</strong><small>Todos los productos con saldo positivo, incluidos los inactivos.</small></section>
       <section className="card stack"><span>Valor del inventario en USD</span><strong className="inventory-total-value">{money(totals.value.toFixed(2))}</strong><small>Existencias × precio de venta actual. Total general, independiente del filtro.</small>
         {totals.unpriced > 0 && <Notice>{totals.unpriced} unidades sin precio están pendientes de valorar.</Notice>}
         {totals.negative > 0 && <Notice>{totals.negative} productos con saldo negativo requieren conciliación y no suman existencias.</Notice>}
       </section>
     </div>}
+    {!stockTracking && <Notice success>Catálogo sin control de existencias. Las ventas no dependen del stock; los productos activos necesitan un precio de venta en USD.</Notice>}
     {message && <Notice success>{message}</Notice>}
     {error && <Notice>{error}</Notice>}
-    {mode === "import" && admin && online ? <ImportWizard products={products} onDone={async () => { await op.sync(true); }} />
+    {mode === "import" && admin && online ? <ImportWizard stockTracking={stockTracking} products={products} onDone={async () => { await op.sync(true); }} />
       : mode === "history" && admin && online ? <InventoryHistory /> : <>
-        {editing === "new" && admin && <ProductForm online={online}
+        {editing === "new" && admin && <ProductForm stockTracking={stockTracking} online={online}
           onCancel={() => setEditing(null)} onSaved={refresh} />}
         <section className="card">
           <div className="toolbar">
             <div className="search"><Search size={17} /><input aria-label="Filtrar inventario" placeholder="Buscar producto o código…" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} /></div>
             <select aria-label="Estado de inventario" value={filter} onChange={(event) => { setFilter(event.target.value); setPage(0); }}>
-              <option value="all">Todos los productos</option><option value="unpriced">Pendientes de precio</option><option value="low">Bajo stock</option><option value="expiring">Vencidos o próximos</option><option value="inactive">Inactivos</option>
+              <option value="all">Todos los productos</option><option value="unpriced">Pendientes de precio</option>{stockTracking && <option value="low">Bajo stock</option>}<option value="expiring">Vencidos o próximos</option><option value="inactive">Inactivos</option>
             </select>
-            {admin && <Button variant="outline" onClick={() => void exportTable("inventario", productFields.map(([, label]) => label), filtered.map((p) => productFields.map(([field]) => p[field]))).catch((e) => setError(accessError(e)))}><ArrowDownToLine size={17} /> Exportar CSV</Button>}
+            {admin && <Button variant="outline" onClick={() => void exportTable("inventario", exportFields.map(([, label]) => label), filtered.map((p) => exportFields.map(([field]) => p[field]))).catch((e) => setError(accessError(e)))}><ArrowDownToLine size={17} /> Exportar CSV</Button>}
           </div>
           {filtered.length === 0 ? <Empty>No hay medicamentos para este filtro.</Empty> : <div className="table-scroll inventory-table"><table>
             <thead>{table.getHeaderGroups().map((group) => <tr key={group.id}>{group.headers.map((head) => <th key={head.id}>{flexRender(head.column.columnDef.header, head.getContext())}</th>)}{admin && online && <th>Acciones</th>}</tr>)}</thead>
@@ -94,15 +98,15 @@ export function Inventory({ op }: { op: Operation }) {
                   {row.getVisibleCells().map((cell) => <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}
                   {admin && online && <td><div className="actions">
                     <Button variant="ghost" aria-expanded={isEditing} onClick={() => { setEditing(isEditing ? null : row.original); setAdjusting(null); }}>Editar</Button>
-                    <Button variant="ghost" aria-expanded={isAdjusting} onClick={() => { setAdjusting(isAdjusting ? null : row.original); setEditing(null); }}>Ajustar</Button>
+                    {stockTracking && <Button variant="ghost" aria-expanded={isAdjusting} onClick={() => { setAdjusting(isAdjusting ? null : row.original); setEditing(null); }}>Ajustar</Button>}
                   </div></td>}
                 </tr>
                 {isEditing && editing && admin && <tr className="inventory-editing">
-                  <td colSpan={columns.length + (online ? 1 : 0)}>
-                    <ProductForm product={editing} online={online} onCancel={() => setEditing(null)} onSaved={refresh} />
+                  <td colSpan={tableColumns.length + (online ? 1 : 0)}>
+                    <ProductForm stockTracking={stockTracking} product={editing} online={online} onCancel={() => setEditing(null)} onSaved={refresh} />
                   </td>
                 </tr>}
-                {isAdjusting && adjusting && admin && <tr className="inventory-editing"><td colSpan={columns.length + (online ? 1 : 0)}>
+                {stockTracking && isAdjusting && adjusting && admin && <tr className="inventory-editing"><td colSpan={tableColumns.length + (online ? 1 : 0)}>
                   <InventoryAdjustment product={adjusting} online={online} onCancel={() => setAdjusting(null)} onSaved={refresh} />
                 </td></tr>}
               </Fragment>;
@@ -142,7 +146,7 @@ function InventoryAdjustment({ product, online, onSaved, onCancel }: { product: 
   </section>;
 }
 
-function ProductForm({ product, online, onSaved, onCancel }: { product?: Product; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
+function ProductForm({ product, online, stockTracking, onSaved, onCancel }: { product?: Product; stockTracking: boolean; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
   const { register, handleSubmit, formState } = useForm<Partial<Record<ProductField, string>> & { active: boolean }>({
     defaultValues: { ...Object.fromEntries(productFields.map(([field]) => [field, String(product?.[field] ?? "")])), active: product?.price === null ? true : product?.active ?? true },
   });
@@ -165,7 +169,9 @@ function ProductForm({ product, online, onSaved, onCancel }: { product?: Product
     }
     setError("");
     try {
-      await rpc("save_product", { data: { ...parsed.data, code: product?.code ?? parsed.data.code }, expected: product?.updated_at ?? null });
+      const data = { ...parsed.data };
+      if (!stockTracking) { delete data.stock; delete data.min_stock; }
+      await rpc("save_product", { data: { ...data, code: product?.code ?? parsed.data.code }, expected: product?.updated_at ?? null });
       await onSaved(product ? "Producto actualizado." : "Producto registrado.");
     } catch (error) { setError(accessError(error)); }
   });
@@ -175,7 +181,7 @@ function ProductForm({ product, online, onSaved, onCancel }: { product?: Product
     {!online && <Notice>El formulario sigue abierto. Conéctate a internet para guardar el producto.</Notice>}
     {error && <Notice>{error}</Notice>}
     <form className="stack" onSubmit={submit}>
-      <div className="form-grid">{productFields.filter(([key]) => !product || key !== "stock").map(([key, label]) =>
+      <div className="form-grid">{productFields.filter(([key]) => (!product || key !== "stock") && (stockTracking || !["stock", "min_stock"].includes(key))).map(([key, label]) =>
         <Field key={key} label={label}><input {...register(key)} readOnly={key === "code" && Boolean(product)}
           type={key === "expiration" ? "date" : "text"} inputMode={key === "price" ? "decimal" : key.includes("stock") ? "numeric" : "text"}
           required={["code", "name", "price"].includes(key)} /></Field>)}</div>
@@ -188,7 +194,7 @@ function ProductForm({ product, online, onSaved, onCancel }: { product?: Product
 const phases = ["Archivo", "Columnas", "Identificación", "Confirmación", "Resultado"];
 const statuses = { new: "Nuevo", update: "Actualizar", duplicate: "Posible duplicado", error: "Error", skip: "Sin cambios" };
 
-function ImportWizard({ products, onDone }: { products: Product[]; onDone: () => Promise<void> }) {
+function ImportWizard({ products, stockTracking, onDone }: { products: Product[]; stockTracking: boolean; onDone: () => Promise<void> }) {
   const [step, setStep] = useState(0);
   const [source, setSource] = useState<{ name: string; headers: string[]; rows: string[][] } | null>(null);
   const [mapping, setMapping] = useState<ReturnType<typeof initialMapping>>({});
@@ -199,7 +205,12 @@ function ImportWizard({ products, onDone }: { products: Product[]; onDone: () =>
   const [reviewed, setReviewed] = useState<ReturnType<typeof reviewInventory>>([]);
   const [attempt, setAttempt] = useState("");
   const [omitted, setOmitted] = useState(new Set<number>());
-  const review = useMemo(() => reviewInventory(source?.rows ?? [], mapping, selected, products), [source, mapping, selected, products]);
+  const importFields = productFields.filter(([key]) => stockTracking || !["stock", "min_stock"].includes(key));
+  const review = useMemo(() => {
+    const fields = { ...mapping };
+    if (!stockTracking) { delete fields.stock; delete fields.min_stock; }
+    return reviewInventory(source?.rows ?? [], fields, selected, products);
+  }, [source, mapping, selected, products, stockTracking]);
   const shownReview = step === 4 ? reviewed : review;
   const valid = shownReview.filter((r) => (r.status === "new" || r.status === "update") && !omitted.has(r.index));
   const missingColumns = ["code", "name"].some((field) => mapping[field as ProductField] === undefined);
@@ -236,7 +247,7 @@ function ImportWizard({ products, onDone }: { products: Product[]; onDone: () =>
       }} /></Field></>}
     {step === 1 && source && <>
       <p>Relaciona cada columna. Si tienes precios, usa USD con punto o coma decimal y para vencimientos usa AAAA-MM-DD.</p>
-      <div className="form-grid">{productFields.map(([field, label]) => <Field key={field} label={label}>
+      <div className="form-grid">{importFields.map(([field, label]) => <Field key={field} label={label}>
         <select value={mapping[field] ?? ""} onChange={(e) => setMapping({ ...mapping, [field]: e.target.value === "" ? undefined : Number(e.target.value) })}>
           <option value="">Sin asignar</option>{source.headers.map((head, i) => <option key={i} value={i}>{i + 1}. {head || "Sin encabezado"}</option>)}
         </select></Field>)}</div>
@@ -246,12 +257,12 @@ function ImportWizard({ products, onDone }: { products: Product[]; onDone: () =>
     </>}
     {step === 2 && <>
       <p>Se identifica cada medicamento por su código interno. Los códigos de barras en conflicto se omiten.</p>
-      <div className="check-grid">{productFields.filter(([field]) => !["code", "stock"].includes(field) && mapping[field] !== undefined).map(([field, label]) =>
+      <div className="check-grid">{importFields.filter(([field]) => !["code", "stock"].includes(field) && mapping[field] !== undefined).map(([field, label]) =>
         <label key={field} className="checkline"><input type="checkbox" checked={selected.has(field)} onChange={(e) => {
           const next = new Set(selected); if (e.target.checked) next.add(field); else next.delete(field); setSelected(next);
         }} /> Actualizar {label.toLowerCase()}</label>)}</div>
       <p>Los productos nuevos sin precio quedan pendientes y fuera de caja hasta que registres un precio en USD.</p>
-      <Notice>Las existencias importadas solo se aplican a productos nuevos. Las diferencias de productos existentes requieren un ajuste de inventario auditado.</Notice>
+      <Notice>{stockTracking ? "Las existencias importadas solo se aplican a productos nuevos. Las diferencias de productos existentes requieren un ajuste de inventario auditado." : "Se importan productos y precios; las columnas de existencias y stock mínimo se omiten."}</Notice>
     </>}
     {(step === 2 || step === 3) && <div className="table-scroll tall"><table>
       <thead><tr>{step === 3 && <th>Aplicar</th>}<th>Fila</th><th>Producto</th><th>Estado</th><th>Detalle</th></tr></thead>

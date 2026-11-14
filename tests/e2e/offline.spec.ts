@@ -18,6 +18,7 @@ const catalog = {
 };
 
 test("registra cliente y venta offline, reabre la PWA y sincroniza una sola vez", async ({ context, page }, testInfo) => {
+  const noStockCatalog = { ...catalog, settings: { ...catalog.settings, stock_tracking: false }, products: catalog.products.map(p => ({ ...p, stock: 0 })) };
   const accepted = new Map<string, Record<string, unknown>>();
   const registeredCustomer = { id: "66188d88-40db-4a94-8d5c-4066a55a48b1", name: "Cliente de prueba", document: "V-12345678", phone: "" };
   const cachedCustomer = { id: "42abbec2-8ffc-4ae8-b128-4edb8d0a24ea", name: "Cliente existente", document: "V-87654321", phone: "" };
@@ -34,10 +35,10 @@ test("registra cliente y venta offline, reabre la PWA y sincroniza una sola vez"
     let result: unknown = null;
     if (path === "/auth/v1/user") result = { user };
     if (path === "/rest/v1/profiles") result = profile;
-    if (path.endsWith("/rpc/catalog")) result = catalog;
+    if (path.endsWith("/rpc/catalog")) result = noStockCatalog;
     if (path.endsWith("/rpc/authorize_device")) result = {
       id: crypto.randomUUID(), shift_required: true, shift_id: "44444444-4444-4444-8444-444444444444", cashier_id: userId, issued_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 86400000).toISOString(), rate_hours: 24, stale_policy: "confirm", catalog,
+      expires_at: new Date(Date.now() + 86400000).toISOString(), rate_hours: 24, stale_policy: "confirm", catalog: noStockCatalog,
     };
     if (path === "/rest/v1/customers") {
       const requestedDocument = new URL(request.url()).searchParams.get("document");
@@ -396,4 +397,31 @@ test("administración descarga un consolidado de seis turnos de tres cajas",asyn
   await expect(page.getByRole("button",{name:"Cerrar turno",exact:true})).toHaveCount(0);
   const downloading=page.waitForEvent("download");await page.getByRole("button",{name:"PDF consolidado de turnos"}).click();const download=await downloading;
   await download.saveAs(testInfo.outputPath("consolidado-seis-turnos.pdf"));
+});
+
+
+test("catálogo sin stock oculta existencias y permite editar precios",async({context,page})=>{
+  const noStockCatalog={...catalog,settings:{...catalog.settings,stock_tracking:false},products:catalog.products.map(p=>({...p,stock:0}))};
+  let saves=0;
+  await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
+  await context.route("https://supabase-fixture.example.com/**",async r=>{
+    const path=new URL(r.request().url()).pathname;let result:unknown=[];
+    if(path==="/auth/v1/user")result={user};
+    if(path==="/rest/v1/profiles")result={...profile,role:"admin"};
+    if(path.endsWith("/rpc/catalog"))result=noStockCatalog;
+    if(path.endsWith("/rpc/save_product")){
+      const {data}=r.request().postDataJSON();expect(data).not.toHaveProperty("stock");expect(data).not.toHaveProperty("min_stock");
+      expect(data.price).toBe("7.25");noStockCatalog.products[0].price=7.25;saves++;result=productId;
+    }
+    await r.fulfill({json:result});
+  });
+  await page.goto("/");await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
+  await page.getByRole("button",{name:"Inventario",exact:true}).click();
+  await expect(page.getByText("Unidades en existencia",{exact:true})).toHaveCount(0);
+  await expect(page.getByRole("columnheader",{name:"Existencias",exact:true})).toHaveCount(0);
+  await expect(page.getByRole("button",{name:"Ajustar",exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"Editar",exact:true}).click();
+  await expect(page.getByLabel("Existencias",{exact:true})).toHaveCount(0);await expect(page.getByLabel("Stock mínimo",{exact:true})).toHaveCount(0);
+  await page.getByLabel("Precio USD",{exact:true}).fill("7,25");await page.getByRole("button",{name:"Guardar producto"}).click();
+  await expect(page.getByRole("cell").filter({hasText:"7,25"})).toBeVisible();expect(saves).toBe(1);
 });

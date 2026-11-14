@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "24"
+
+# Netlify aplica automáticamente su adaptador OpenNext.
+# SUPABASE_LOGIN_DOMAIN y las dos NEXT_PUBLIC_SUPABASE_* van en Environment variables,
+# con alcance Builds y Functions. No publicar valores de acceso en este archivo.

@@ -13,7 +13,7 @@ test("Turnos: dos cierres independientes, noche, permisos, reintentos y sincroni
     grant usage on schema auth to authenticated;
     insert into auth.users values('${admin}','a@x'),('${cashier}','c@x'),('${other}','o@x');`);
   const dir = new URL("../supabase/migrations/",import.meta.url);
-  for (const name of (await readdir(dir)).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
+  for (const name of (await readdir(dir)).filter(name=>!name.includes("008")).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
   await db.exec(`insert into public.profiles(id,username,role,register_no) values('${admin}','admin','admin',null),('${cashier}','caja3','cashier',3),('${other}','caja2','cashier',2);`);
   const as = async (id) => { await db.exec("reset role"); await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]); await db.exec("set role authenticated"); };
   const rpc = async (expr,args=[]) => (await db.query("select "+expr+" as r",args)).rows[0].r;
@@ -75,4 +75,34 @@ test("Turnos: dos cierres independientes, noche, permisos, reintentos y sincroni
   // Solo cuatro ventas reales de prueba, una anulada; inventario conserva su saldo auditado.
   await as(admin); assert.equal((await rpc("public.catalog()")).products[0].stock,47);
   await assert.rejects(rpc("public.close_register($1)",[day]),/Cerrar turno/);
+  // Actualizar una base existente a catálogo sin stock conserva precios e historial.
+  await db.exec("reset role");
+  const oldPrices = await rpc("(select jsonb_agg(to_jsonb(p) order by id) from public.product_prices p)");
+  const oldSales = await rpc("(select count(*)::int from public.sales)");
+  await db.exec(await readFile(new URL("202611140008_catalogo_sin_stock.sql",dir),"utf8"));
+  assert.deepEqual(await rpc("(select jsonb_agg(to_jsonb(p) order by id) from public.product_prices p)"),oldPrices);
+  assert.equal(await rpc("(select count(*)::int from public.sales)"),oldSales);
+  assert.equal(await rpc("(select stock from private.stock_before_catalog_mode where product_id=$1)",[product]),47);
+  await as(admin);
+  const catalog = await rpc("public.catalog()");
+  assert.equal(catalog.settings.stock_tracking,false); assert.equal(catalog.products[0].stock,0);
+  assert.equal(catalog.products[0].price,2);
+  await assert.rejects(rpc("public.adjust_inventory($1,1,'Prueba sin stock')",[product]),/sin control/);
+  await as(cashier);
+  await assert.rejects(db.exec("select * from private.stock_before_catalog_mode"),/permission denied/);
+  const unlimitedShift = crypto.randomUUID(); await rpc("public.open_register_shift($1)",[unlimitedShift]);
+  const unlimitedGrant = await rpc("public.authorize_device()");
+  const bulk = makeSale(unlimitedGrant); bulk.items[0].quantity=20;bulk.payments[0].amount="40";
+  assert.deepEqual(await rpc("public.confirm_sale($1)",[bulk]),{id:bulk.id,reconciliation:false});
+  assert.deepEqual(await rpc("public.confirm_sale($1)",[bulk]),{id:bulk.id,reconciliation:false});
+  assert.equal(await rpc("public.close_register_shift($1)",[unlimitedShift]),1);
+  assert.equal((await rpc("public.register_shift_day($1)",[day])).find(s=>s.id===unlimitedShift).closure.summary.units,20);
+  await as(admin);
+  assert.equal((await rpc("public.catalog()")).products[0].stock,0);
+  assert.equal(await rpc("(select count(*)::int from public.inventory_movements where sale_id=$1)",[bulk.id]),0);
+  await rpc("public.set_fiscal_status($1,'void','','2026-11-14','Anular sin stock')",[bulk.id]);
+  assert.equal((await rpc("public.catalog()")).products[0].stock,0);
+  const another = await rpc("public.save_product($1)",[{code:"IGNORAR-STOCK",name:"Nuevo sin stock",price:3,stock:99,min_stock:10}]);
+  assert.equal((await rpc("public.catalog()")).products.find(p=>p.id===another).stock,0);
+
 });

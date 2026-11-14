@@ -174,7 +174,8 @@ export function useOperation() {
           }
           const failure = [...results.values()].find((receipt) => receipt.local);
           const rateChanged = currentCatalog.rate?.id !== stored.grant.catalog.rate?.id;
-          const changed = results.size > 0 || renew || rateChanged || expired(stored) ||
+          const modeChanged = currentCatalog.settings.stock_tracking !== stored.grant.catalog.settings.stock_tracking;
+          const changed = results.size > 0 || renew || rateChanged || modeChanged || expired(stored) ||
             Date.now() - Date.parse(stored.grant.issued_at) > 5 * 60_000;
           if (changed && sameSession() && navigator.onLine) {
             const grant = await rpc<Grant>("authorize_device");
@@ -291,7 +292,10 @@ export function useOperation() {
         const product = stored.grant.catalog.products.find((p) => p.id === item.product_id && p.active && p.price !== null && p.price_id === item.price_id);
         const reserved = stored.sales.filter(({ receipt }) => receipt.local).flatMap(({ payload }) => payload.items)
           .filter((p) => p.product_id === item.product_id).reduce((sum, p) => sum + p.quantity, 0);
-        if (!product || product.stock - reserved < item.quantity) throw new Error("El saldo local cambió. Revisa las cantidades.");
+        if (!product || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 10000 ||
+          (stored.grant.catalog.settings.stock_tracking !== false && product.stock - reserved < item.quantity)) {
+          throw new Error("El catálogo local cambió. Revisa los productos y cantidades.");
+        }
       }
       if (stored.sales.filter(({ receipt }) => receipt.local).length >= 1000) {
         throw new Error("Sincroniza las ventas pendientes antes de seguir registrando.");

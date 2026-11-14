@@ -24,7 +24,7 @@ test("Migraciones, permisos, cobro mixto, reintentos y conflicto de inventario",
     insert into auth.users values ('${admin}','admin@prueba.local'),('${first}','cajera1@prueba.local'),
       ('${second}','cajera2@prueba.local'),('${third}','cajera3@prueba.local'),('${unmanaged}',null);
   `);
-  for (const name of (await readdir(file)).filter((name) => !name.includes("007")).sort()) await db.exec(await readFile(new URL(name, file), "utf8"));
+  for (const name of (await readdir(file)).filter((name) => !name.includes("007") && !name.includes("008")).sort()) await db.exec(await readFile(new URL(name, file), "utf8"));
   await db.exec(`insert into public.profiles(id,username,role) values ('${admin}','admin','admin')`);
   const configure = (await readFile(new URL("../supabase/configurar_cajas.sql", import.meta.url), "utf8"))
     .replace("= '';", "= 'prueba.local';");

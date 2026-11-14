@@ -197,13 +197,15 @@ function Dashboard({ op, open }: { op: Operation; open: (page: View) => void }) 
   const today = summarize(op.receipts.filter((receipt) => localDay(receipt.occurred_at) === localDay()));
   const all = summarize(op.receipts);
   const products = op.catalog?.products ?? [];
+  const stockTracking = op.catalog?.settings.stock_tracking !== false;
   const low = products.filter((p) => p.active && p.stock <= p.min_stock);
   const transferred = all.rows.filter((r) => r.fiscal_status === "transferred").length;
   const admin = op.profile?.role === "admin";
   const tiles = [
     { name: "Ventas de hoy", value: today.rows.length, detail: "Operaciones registradas", icon: ShoppingCart, tone: "green" },
     { name: "Total vendido", value: money(today.total.toFixed(2)), detail: "USD de referencia hoy", icon: Activity, tone: "green" },
-    { name: "Bajo inventario", value: low.length, detail: "En el mínimo o por debajo", icon: Package, tone: "amber" },
+    stockTracking ? { name: "Bajo inventario", value: low.length, detail: "En el mínimo o por debajo", icon: Package, tone: "amber" } :
+      { name: "Productos en catálogo", value: products.length, detail: "Sin control de existencias", icon: Package, tone: "blue" },
     { name: "Por sincronizar", value: all.localCount, detail: "Guardadas en este dispositivo", icon: CloudOff, tone: "blue" },
   ];
   return <>

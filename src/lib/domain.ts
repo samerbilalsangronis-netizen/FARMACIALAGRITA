@@ -9,6 +9,7 @@ export type Product = {
   stock: number; min_stock: number; batch: string | null; expiration: string | null; active: boolean; updated_at: string;
 };
 export type Settings = {
+  stock_tracking?: boolean;
   pharmacy_name: string; address: string; phone: string; offline_hours: number;
   rate_hours: number; stale_policy: "confirm" | "block";
 };

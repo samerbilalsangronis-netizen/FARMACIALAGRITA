@@ -9,3 +9,5 @@ public/precache.generated.js
 public/icon-*.png
 test-results/
 playwright-report/
+
+.netlify/

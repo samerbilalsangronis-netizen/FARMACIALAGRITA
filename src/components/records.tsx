@@ -353,7 +353,7 @@ export function Reports({ op }: { op: Operation }) {
       <section className="card stack"><h2>Ventas por día</h2>{dates.length ? dates.map(([day, total]) =>
         <div className="chart-row" key={day}><span>{day}</span><div className="chart-track"><span style={{ width: 100 * total.toNumber() / max + "%" }} /></div><b>{money(total.toFixed(2))}</b></div>) : <Empty>Sin ventas en el período.</Empty>}</section>
       <section className="card stack"><h2>Ventas por cajero</h2>{stats.byCashier.size ? [...stats.byCashier.entries()].map(([name, totals]) => <div className="list-line" key={name}><span>{name} · {totals.count} ventas</span><strong>{money(totals.total.toFixed(2))}</strong></div>) : <Empty>Sin ventas en el período.</Empty>}</section>
-      <section className="card stack"><h2>Menor existencia</h2>{low.length ? low.slice(0, 20).map((p) => <div className="list-line" key={p.id}><span>{p.name}</span><strong>{p.stock}</strong></div>) : <Empty>Sin productos bajo el mínimo.</Empty>}</section>
+      {op.catalog?.settings.stock_tracking !== false && <section className="card stack"><h2>Menor existencia</h2>{low.length ? low.slice(0, 20).map((p) => <div className="list-line" key={p.id}><span>{p.name}</span><strong>{p.stock}</strong></div>) : <Empty>Sin productos bajo el mínimo.</Empty>}</section>}
     </div>
   </>;
 }
