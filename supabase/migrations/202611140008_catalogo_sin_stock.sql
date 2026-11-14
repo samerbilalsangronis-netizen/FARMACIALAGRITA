@@ -11,6 +11,7 @@ create table private.stock_before_catalog_mode (
   min_stock integer not null,
   captured_at timestamptz not null default clock_timestamp()
 );
+alter table private.stock_before_catalog_mode enable row level security;
 revoke all on private.stock_before_catalog_mode from public,anon,authenticated;
 insert into private.stock_before_catalog_mode(product_id,stock,min_stock)
   select id,stock,min_stock from public.products;

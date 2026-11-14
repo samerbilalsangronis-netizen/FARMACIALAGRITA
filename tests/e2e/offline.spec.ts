@@ -425,3 +425,30 @@ test("catálogo sin stock oculta existencias y permite editar precios",async({co
   await page.getByLabel("Precio USD",{exact:true}).fill("7,25");await page.getByRole("button",{name:"Guardar producto"}).click();
   await expect(page.getByRole("cell").filter({hasText:"7,25"})).toBeVisible();expect(saves).toBe(1);
 });
+
+test("calcula y guarda el precio desde costo y porcentaje y lo muestra en caja",async({context,page})=>{
+  const pricedCatalog={...catalog,pricing_enabled:true,settings:{...catalog.settings,stock_tracking:false},products:catalog.products.map(p=>({...p,stock:0,net_cost:null as number|null,markup_percent:null as number|null}))};
+  let saves=0;
+  await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
+  await context.route("https://supabase-fixture.example.com/**",async r=>{
+    const path=new URL(r.request().url()).pathname;let result:unknown=[];
+    if(path==="/auth/v1/user")result={user};
+    if(path==="/rest/v1/profiles")result={...profile,role:"admin"};
+    if(path.endsWith("/rpc/catalog"))result=pricedCatalog;
+    if(path.endsWith("/rpc/save_product")){
+      const {data}=r.request().postDataJSON();
+      expect(data).toMatchObject({pricing_mode:"cost",net_cost:"10",markup_percent:"25",price:"12.50"});
+      pricedCatalog.products[0].price=12.5;pricedCatalog.products[0].net_cost=10;pricedCatalog.products[0].markup_percent=25;saves++;result=productId;
+    }
+    await r.fulfill({json:result});
+  });
+  await page.goto("/");await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
+  await page.getByRole("button",{name:"Inventario",exact:true}).click();await page.getByRole("button",{name:"Editar",exact:true}).click();
+  await page.getByRole("checkbox",{name:"Calcular precio desde costo y ganancia",exact:true}).check();
+  await page.getByLabel("Costo neto USD",{exact:true}).fill("10");await page.getByLabel("Ganancia sobre costo (%)",{exact:true}).fill("25");
+  await expect(page.getByLabel("Precio de venta USD",{exact:true})).toHaveValue("12.50");
+  await page.getByRole("button",{name:"Guardar producto",exact:true}).click();await expect(page.getByText("Producto actualizado.",{exact:true})).toBeVisible();expect(saves).toBe(1);
+  const row=page.getByRole("row").filter({has:page.getByText("Acetaminofén",{exact:true})});await expect(row).toContainText("12,50");await expect(row).toContainText("25 %");
+  await page.getByRole("button",{name:"Editar",exact:true}).click();await expect(page.getByLabel("Costo neto USD",{exact:true})).toHaveValue("10");await page.getByRole("button",{name:"Cancelar",exact:true}).click();
+  await page.getByRole("button",{name:"Punto de venta",exact:true}).click();await expect(page.getByText(/12,50/).first()).toBeVisible();await expect(page.getByText(/disponibles/)).toHaveCount(0);
+});

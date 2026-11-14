@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useForm } from "react-hook-form";
 import { ArrowDownToLine, FileSpreadsheet, History, Plus, Search } from "lucide-react";
-import { decimal, displayDate, localDay, money, normalize, productFields, productSchema, type Product, type ProductField } from "@/lib/domain";
+import { decimal, displayDate, localDay, money, normalize, productFields, productSchema, salePriceFromCost, type Product, type ProductField } from "@/lib/domain";
 import { exportTable } from "@/lib/export";
 import { initialMapping, readInventory, reviewInventory } from "@/lib/import-inventory";
 import { rpc, supabase } from "@/lib/supabase";
@@ -18,6 +18,8 @@ const columns = [
   column.accessor("name", { header: "Producto", cell: ({ row }) => <><strong>{row.original.name}</strong><small>{row.original.code} · {row.original.presentation || "Sin presentación"}</small></> }),
   column.accessor("category", { header: "Categoría", cell: ({ getValue }) => getValue() || "—" }),
   column.accessor("price", { header: "Precio", cell: ({ getValue }) => { const price = getValue(); return price === null ? <span className="pill warning">Pendiente de precio</span> : money(price); } }),
+  column.accessor("net_cost", { header: "Costo neto USD", cell: ({ getValue }) => getValue() == null ? "—" : money(getValue()!) }),
+  column.accessor("markup_percent", { header: "Ganancia sobre costo", cell: ({ getValue }) => getValue() == null ? "—" : new Intl.NumberFormat("es-VE", {maximumFractionDigits:4}).format(getValue()!) + " %" }),
   column.accessor("stock", { header: "Existencias", cell: ({ row }) => <span className={row.original.stock <= row.original.min_stock ? "pill warning" : "pill"}>{row.original.stock} unidades</span> }),
   column.accessor("expiration", { header: "Vencimiento", cell: ({ getValue }) => getValue() ?? "—" }),
   column.accessor("active", { header: "Estado", cell: ({ getValue }) => getValue() ? "Activo" : "Inactivo" }),
@@ -36,7 +38,9 @@ export function Inventory({ op }: { op: Operation }) {
   const online = op.connection === "online" || op.connection === "syncing" || (op.connection === "error" && Boolean(op.catalog));
   const products = op.catalog?.products ?? emptyProducts;
   const stockTracking = op.catalog?.settings.stock_tracking !== false;
-  const tableColumns = useMemo(() => columns.filter((c) => stockTracking || c.accessorKey !== "stock"), [stockTracking]);
+  const pricingEnabled = Boolean(op.catalog?.pricing_enabled);
+  const tableColumns = useMemo(() => columns.filter((c) => (stockTracking || c.accessorKey !== "stock") &&
+    (admin && pricingEnabled || !["net_cost", "markup_percent"].includes(c.accessorKey))), [stockTracking, admin, pricingEnabled]);
   const exportFields = productFields.filter(([key]) => stockTracking || !["stock", "min_stock"].includes(key));
   const totals = useMemo(() => products.reduce((sum, p) => {
     const units = Math.max(0, p.stock);
@@ -78,7 +82,7 @@ export function Inventory({ op }: { op: Operation }) {
     {error && <Notice>{error}</Notice>}
     {mode === "import" && admin && online ? <ImportWizard stockTracking={stockTracking} products={products} onDone={async () => { await op.sync(true); }} />
       : mode === "history" && admin && online ? <InventoryHistory /> : <>
-        {editing === "new" && admin && <ProductForm stockTracking={stockTracking} online={online}
+        {editing === "new" && admin && <ProductForm pricingEnabled={pricingEnabled} stockTracking={stockTracking} online={online}
           onCancel={() => setEditing(null)} onSaved={refresh} />}
         <section className="card">
           <div className="toolbar">
@@ -103,7 +107,7 @@ export function Inventory({ op }: { op: Operation }) {
                 </tr>
                 {isEditing && editing && admin && <tr className="inventory-editing">
                   <td colSpan={tableColumns.length + (online ? 1 : 0)}>
-                    <ProductForm stockTracking={stockTracking} product={editing} online={online} onCancel={() => setEditing(null)} onSaved={refresh} />
+                    <ProductForm pricingEnabled={pricingEnabled} stockTracking={stockTracking} product={editing} online={online} onCancel={() => setEditing(null)} onSaved={refresh} />
                   </td>
                 </tr>}
                 {stockTracking && isAdjusting && adjusting && admin && <tr className="inventory-editing"><td colSpan={tableColumns.length + (online ? 1 : 0)}>
@@ -146,11 +150,16 @@ function InventoryAdjustment({ product, online, onSaved, onCancel }: { product: 
   </section>;
 }
 
-function ProductForm({ product, online, stockTracking, onSaved, onCancel }: { product?: Product; stockTracking: boolean; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
+function ProductForm({ product, online, stockTracking, pricingEnabled, onSaved, onCancel }: { product?: Product; pricingEnabled: boolean; stockTracking: boolean; online: boolean; onSaved: (text: string) => Promise<void>; onCancel: () => void }) {
   const { register, handleSubmit, formState } = useForm<Partial<Record<ProductField, string>> & { active: boolean }>({
     defaultValues: { ...Object.fromEntries(productFields.map(([field]) => [field, String(product?.[field] ?? "")])), active: product?.price === null ? true : product?.active ?? true },
   });
   const [error, setError] = useState("");
+  const [costMode, setCostMode] = useState(pricingEnabled && (!product || product.net_cost != null));
+  const [netCost, setNetCost] = useState(String(product?.net_cost ?? ""));
+  const [markup, setMarkup] = useState(String(product?.markup_percent ?? 25));
+  let calculated = ""; let calculationError = "";
+  if (costMode) { try { calculated = salePriceFromCost(netCost, markup); } catch (e) { calculationError = accessError(e); } }
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (!product || !title.current) return;
@@ -159,7 +168,8 @@ function ProductForm({ product, online, stockTracking, onSaved, onCancel }: { pr
   }, [product]);
   const submit = handleSubmit(async (values) => {
     if (!online) return;
-    const clean = { ...values, price: values.price?.replace(",", "."), min_stock: values.min_stock || "0" };
+    if (costMode && calculationError) { setError(calculationError); return; }
+    const clean = { ...values, price: costMode ? calculated : values.price?.replace(",", "."), min_stock: values.min_stock || "0" };
     if (product) delete clean.stock;
     else clean.stock = values.stock || "0";
     const parsed = productSchema.safeParse(clean);
@@ -171,7 +181,8 @@ function ProductForm({ product, online, stockTracking, onSaved, onCancel }: { pr
     try {
       const data = { ...parsed.data };
       if (!stockTracking) { delete data.stock; delete data.min_stock; }
-      await rpc("save_product", { data: { ...data, code: product?.code ?? parsed.data.code }, expected: product?.updated_at ?? null });
+      await rpc("save_product", { data: { ...data, code: product?.code ?? parsed.data.code,
+        ...(pricingEnabled ? costMode ? { pricing_mode: "cost", net_cost: netCost.trim().replace(",", "."), markup_percent: markup.trim().replace(",", ".") } : { pricing_mode: "manual" } : {}) }, expected: product?.updated_at ?? null });
       await onSaved(product ? "Producto actualizado." : "Producto registrado.");
     } catch (error) { setError(accessError(error)); }
   });
@@ -181,10 +192,21 @@ function ProductForm({ product, online, stockTracking, onSaved, onCancel }: { pr
     {!online && <Notice>El formulario sigue abierto. Conéctate a internet para guardar el producto.</Notice>}
     {error && <Notice>{error}</Notice>}
     <form className="stack" onSubmit={submit}>
-      <div className="form-grid">{productFields.filter(([key]) => (!product || key !== "stock") && (stockTracking || !["stock", "min_stock"].includes(key))).map(([key, label]) =>
+      <div className="form-grid">{productFields.filter(([key]) => (!product || key !== "stock") && (!costMode || key !== "price") && (stockTracking || !["stock", "min_stock"].includes(key))).map(([key, label]) =>
         <Field key={key} label={label}><input {...register(key)} readOnly={key === "code" && Boolean(product)}
           type={key === "expiration" ? "date" : "text"} inputMode={key === "price" ? "decimal" : key.includes("stock") ? "numeric" : "text"}
           required={["code", "name", "price"].includes(key)} /></Field>)}</div>
+      {pricingEnabled && <section className="stack">
+        <label className="checkline"><input type="checkbox" checked={costMode} onChange={(e) => setCostMode(e.target.checked)} /> Calcular precio desde costo y ganancia</label>
+        {costMode && <>
+          <div className="form-grid">
+            <Field label="Costo neto USD"><input inputMode="decimal" value={netCost} onChange={(e) => setNetCost(e.target.value)} required /></Field>
+            <Field label="Ganancia sobre costo (%)"><input inputMode="decimal" value={markup} onChange={(e) => setMarkup(e.target.value)} required /></Field>
+            <Field label="Precio de venta USD"><input value={calculated} readOnly placeholder="Se calcula automáticamente" /></Field>
+          </div>
+          <p className="muted">Precio de venta = costo neto × (1 + porcentaje / 100). Ejemplo: USD 10 + 25 % = USD 12,50. Este es el precio que se cobra en caja.</p>
+        </>}
+      </section>}
       <label className="checkline"><input type="checkbox" {...register("active")} /> Producto activo</label>
       <div className="actions"><Button type="submit" disabled={!online || formState.isSubmitting}>{formState.isSubmitting ? "Guardando…" : "Guardar producto"}</Button><Button variant="ghost" onClick={onCancel}>Cancelar</Button></div>
     </form>

@@ -174,8 +174,12 @@ export function useOperation() {
           }
           const failure = [...results.values()].find((receipt) => receipt.local);
           const rateChanged = currentCatalog.rate?.id !== stored.grant.catalog.rate?.id;
-          const modeChanged = currentCatalog.settings.stock_tracking !== stored.grant.catalog.settings.stock_tracking;
-          const changed = results.size > 0 || renew || rateChanged || modeChanged || expired(stored) ||
+          const modeChanged = currentCatalog.settings.stock_tracking !== stored.grant.catalog.settings.stock_tracking ||
+            currentCatalog.pricing_enabled !== stored.grant.catalog.pricing_enabled;
+          const storedPrices = new Map(stored.grant.catalog.products.map((p) => [p.id, p.price_id]));
+          const priceChanged = currentCatalog.products.length !== storedPrices.size ||
+            currentCatalog.products.some((p) => !storedPrices.has(p.id) || storedPrices.get(p.id) !== p.price_id);
+          const changed = results.size > 0 || renew || rateChanged || modeChanged || priceChanged || expired(stored) ||
             Date.now() - Date.parse(stored.grant.issued_at) > 5 * 60_000;
           if (changed && sameSession() && navigator.onLine) {
             const grant = await rpc<Grant>("authorize_device");

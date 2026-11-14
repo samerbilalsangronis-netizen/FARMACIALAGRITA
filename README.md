@@ -90,3 +90,11 @@ Una vez publicada esta versión, ejecuta UNA VEZ `supabase/migrations/2026111400
 Antes de eliminar Vercel verifica en la dirección nueva: acceso administrador y cajeras, catálogo y precios de Supabase, carga de logo/PDF y preparación del dispositivo. Prueba offline solo después de preparar la app en el nuevo dominio. Los datos locales de un dominio no se transfieren al otro: sincroniza cualquier venta/cliente pendiente desde Vercel si existiera; nunca borres datos locales para corregir una migración. Cuando la base aún no tiene ventas, basta comprobar que los productos y precios coinciden.
 
 Tras validar Netlify y repartir el nuevo enlace, elimina únicamente el proyecto `farmacia-la-grita` de Vercel desde su configuración general. Esta acción retira la dirección `farmacia-la-grita.vercel.app`; conserva GitHub y el proyecto independiente de Supabase. Los accesos directos anteriores deben reemplazarse por la dirección de Netlify. La eliminación de Vercel queda pendiente hasta confirmar que Netlify está funcionando.
+
+## Costo neto y ganancia sobre costo (009)
+
+La migración `202611140009_costos_ganancia.sql` no cambia precios existentes. Agrega la configuración privada de costos y permite activarla por producto desde **Inventario → Editar → Calcular precio desde costo y ganancia**. Introduce **Costo neto USD** y **Ganancia sobre costo (%)**; el precio de venta es `redondear(costo × (1 + porcentaje/100), 2)`. Ejemplo: USD 10 y 25 % dan USD 12,50. Es un recargo sobre costo; el margen sobre el precio de venta en ese ejemplo es 20 %.
+
+Los productos anteriores conservan su precio manual hasta guardar costos. Se puede volver a precio manual desmarcando el cálculo. El administrador ve costo y porcentaje en inventario; las cajeras reciben solo el precio de venta. Los costos se guardan en una tabla privada con RLS y sin permisos para clientes anónimos o autenticados. El servidor recalcula el precio y conserva el historial de precios para las ventas pendientes offline. La sincronización renueva el catálogo cuando cambian los precios. Un dispositivo sin conexión conserva su autorización y precios hasta sincronizar.
+
+La marca **Powered by Netlify** se desactivó para este proyecto desde **Project configuration → General → Powered by Netlify badge**; no se oculta mediante CSS ni requiere pagar un plan.

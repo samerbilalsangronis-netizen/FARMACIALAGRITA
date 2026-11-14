@@ -13,7 +13,7 @@ test("Turnos: dos cierres independientes, noche, permisos, reintentos y sincroni
     grant usage on schema auth to authenticated;
     insert into auth.users values('${admin}','a@x'),('${cashier}','c@x'),('${other}','o@x');`);
   const dir = new URL("../supabase/migrations/",import.meta.url);
-  for (const name of (await readdir(dir)).filter(name=>!name.includes("008")).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
+  for (const name of (await readdir(dir)).filter(name=>!name.includes("008") && !name.includes("009")).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
   await db.exec(`insert into public.profiles(id,username,role,register_no) values('${admin}','admin','admin',null),('${cashier}','caja3','cashier',3),('${other}','caja2','cashier',2);`);
   const as = async (id) => { await db.exec("reset role"); await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]); await db.exec("set role authenticated"); };
   const rpc = async (expr,args=[]) => (await db.query("select "+expr+" as r",args)).rows[0].r;
@@ -29,7 +29,7 @@ test("Turnos: dos cierres independientes, noche, permisos, reintentos y sincroni
   assert.equal(await rpc("public.open_register_shift($1)",[crypto.randomUUID()]),first);
   const grant = await rpc("public.authorize_device()"); assert.equal(grant.shift_id,first);
   const makeSale = (g) => ({id:crypto.randomUUID(),grant_id:g.id,occurred_at:new Date().toISOString(),rate_id:g.catalog.rate.id,
-    customer_id:null,stale_confirmed:false,discount:"0",items:[{product_id:product,price_id:g.catalog.products[0].price_id,quantity:1}],
+    customer_id:null,stale_confirmed:false,discount:"0",items:[{product_id:product,price_id:g.catalog.products.find(p=>p.id===product).price_id,quantity:1}],
     payments:[{method:"cash",currency:"USD",amount:"2",change_amount:"0"}]});
   await assert.rejects(rpc("public.confirm_sale($1)",[makeSale(noShift)]),/Inicia un turno/);
   const sale = makeSale(grant); await rpc("public.confirm_sale($1)",[sale]);
@@ -104,5 +104,35 @@ test("Turnos: dos cierres independientes, noche, permisos, reintentos y sincroni
   assert.equal((await rpc("public.catalog()")).products[0].stock,0);
   const another = await rpc("public.save_product($1)",[{code:"IGNORAR-STOCK",name:"Nuevo sin stock",price:3,stock:99,min_stock:10}]);
   assert.equal((await rpc("public.catalog()")).products.find(p=>p.id===another).stock,0);
+
+  await db.exec("reset role");
+  const pricesBeforeCostUpgrade = await rpc("(select jsonb_agg(to_jsonb(p) order by id) from public.product_prices p)");
+  await db.exec(await readFile(new URL("202611140009_costos_ganancia.sql",dir),"utf8"));
+  assert.deepEqual(await rpc("(select jsonb_agg(to_jsonb(p) order by id) from public.product_prices p)"), pricesBeforeCostUpgrade);
+  await as(cashier); const pricingShift = crypto.randomUUID(); await rpc("public.open_register_shift($1)",[pricingShift]);
+  const priceGrantBefore = await rpc("public.authorize_device()");
+  await as(admin);
+  let priced = (await rpc("public.catalog()")).products.find(p=>p.id===product);
+  await rpc("public.save_product($1,$2)",[{code:"T1",net_cost:"10",markup_percent:"25",pricing_mode:"cost",price:999},priced.updated_at]);
+  priced = (await rpc("public.catalog()")).products.find(p=>p.id===product);
+  assert.equal(priced.price,12.5); assert.equal(priced.net_cost,10);assert.equal(priced.markup_percent,25);
+  assert.equal((await rpc("public.catalog()")).pricing_enabled,true);
+  await assert.rejects(rpc("public.save_product($1,$2)",[{code:"T1",net_cost:-1,markup_percent:25,pricing_mode:"cost"},priced.updated_at]),/Revisa el costo/);
+  await as(cashier);
+  const cashierProduct = (await rpc("public.catalog()")).products.find(p=>p.id===product);
+  assert.equal(cashierProduct.price,12.5);assert.equal(Object.hasOwn(cashierProduct,"net_cost"),false);
+  await assert.rejects(db.exec("select * from private.product_costs"),/permission denied/);
+  await assert.rejects(rpc("public.save_product($1,$2)",[{code:"T1",net_cost:1,markup_percent:1,pricing_mode:"cost"},priced.updated_at]),/no autorizada/);
+  const oldPriceSale = makeSale(priceGrantBefore); await rpc("public.confirm_sale($1)",[oldPriceSale]);
+  const priceGrantAfter = await rpc("public.authorize_device()");
+  const calculatedSale = makeSale(priceGrantAfter);calculatedSale.payments[0].amount="12.50";
+  await rpc("public.confirm_sale($1)",[calculatedSale]);
+  await as(admin);
+  assert.equal(await rpc("(select unit_price from public.sale_items where sale_id=$1)",[oldPriceSale.id]),"2.00");
+  assert.equal(await rpc("(select unit_price from public.sale_items where sale_id=$1)",[calculatedSale.id]),"12.50");
+  await rpc("public.save_product($1,$2)",[{code:"T1",name:"Cambio de nombre",price:999},priced.updated_at]);
+  priced=(await rpc("public.catalog()")).products.find(p=>p.id===product);assert.equal(priced.price,12.5);
+  await rpc("public.save_product($1,$2)",[{code:"T1",pricing_mode:"manual",price:"3.75"},priced.updated_at]);
+  priced=(await rpc("public.catalog()")).products.find(p=>p.id===product);assert.equal(priced.net_cost,null);assert.equal(priced.price,3.75);
 
 });

@@ -6,6 +6,7 @@ export type Profile = { id: string; username: string; role: "admin" | "cashier" 
 export type Product = {
   id: string; code: string; barcode: string | null; name: string; ingredient: string; strength: string;
   presentation: string; category: string; laboratory: string; price: number | null; price_id: string | null;
+  net_cost?: number | null; markup_percent?: number | null;
   stock: number; min_stock: number; batch: string | null; expiration: string | null; active: boolean; updated_at: string;
 };
 export type Settings = {
@@ -15,7 +16,7 @@ export type Settings = {
 };
 export type Rate = { id: string; ves: number; cop: number; created_at: string };
 export type Method = { code: string; label: string };
-export type Catalog = { products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
+export type Catalog = { pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
 export type Grant = { shift_id?: string | null; shift_required?: boolean; id: string; cashier_id: string; issued_at: string; expires_at: string; rate_hours: number; stale_policy: "confirm" | "block"; catalog: Catalog };
 export type Customer = { id: string; name: string; document: string; phone?: string | null; notes?: string | null };
 export type Payment = { currency: Currency; method: string; amount: string; change_amount: string };
@@ -94,3 +95,17 @@ export const productFields = [
 export type ProductField = typeof productFields[number][0];
 export const normalize = (text: string) => text.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 export const disclaimer = "COMPROBANTE INTERNO DE CONTROL — NO ES FACTURA FISCAL";
+
+
+export function salePriceFromCost(netCost: string, markup: string): string {
+  const costText = netCost.trim().replace(",", ".");
+  const percentText = markup.trim().replace(",", ".");
+  if (!/^\d{1,10}(?:\.\d{1,4})?$/.test(costText) || !/^\d{1,5}(?:\.\d{1,4})?$/.test(percentText)) {
+    throw new Error("Indica un costo neto y un porcentaje válidos, con hasta cuatro decimales.");
+  }
+  const cost = new decimal(costText); const percent = new decimal(percentText);
+  if (cost.lte(0) || percent.gt(10000)) throw new Error("El costo debe ser mayor que cero y el porcentaje entre 0 y 10000.");
+  const price = cost.times(percent.div(100).plus(1)).toDecimalPlaces(2);
+  if (price.lte(0) || price.gt("999999999999.99")) throw new Error("El precio calculado está fuera de rango.");
+  return price.toFixed(2);
+}

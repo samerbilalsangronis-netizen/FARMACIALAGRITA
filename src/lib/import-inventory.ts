@@ -79,6 +79,7 @@ export function reviewInventory(rows: string[][], mapping: Mapping, selected: Se
       (values.barcode && (barcodeCount.get(values.barcode) ?? 0) > 1) || (claimed && claimed.id !== existing?.id));
     const changes = productFields.flatMap(([field, label]) => {
       const incoming = values[field];
+      if (field === "price" && existing?.net_cost != null) return [];
       if (field === "code" || field === "stock" || incoming === undefined || !selected.has(field) || !existing) return [];
       const before = String(existing[field] ?? "");
       return before === incoming ? [] : [{ field, label, before, after: incoming }];
