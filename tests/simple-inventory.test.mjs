@@ -12,7 +12,7 @@ test("inventario simple: activa sin cambiar precios, porcentaje global seguro y 
     grant usage on schema auth to authenticated;
     insert into auth.users values('${admin}','a@x'),('${cashier}','c@x');`);
   const dir = new URL("../supabase/migrations/",import.meta.url);
-  for (const name of (await readdir(dir)).filter(name=>!name.includes("010")).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
+  for (const name of (await readdir(dir)).filter(name=>!name.includes("010") && !name.includes("011")).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
   await db.exec(`insert into public.profiles(id,username,role,register_no) values('${admin}','admin','admin',null),('${cashier}','caja1','cashier',1);`);
   const as = async (id) => { await db.exec("reset role"); await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]); await db.exec("set role authenticated"); };
   const rpc = async (expr,args=[]) => (await db.query("select "+expr+" as r",args)).rows[0].r;

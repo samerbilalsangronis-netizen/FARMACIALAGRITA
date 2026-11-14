@@ -20,6 +20,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
   onOpenRegisters: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState(50);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [discountInput, setDiscountInput] = useState("0");
   const [payments, setPayments] = useState<Payment[]>([payment()]);
@@ -48,12 +49,12 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
         deductions.set(item.product_id, (deductions.get(item.product_id) ?? 0) + item.quantity);
       }
     }
-    return (snapshot?.products ?? []).filter((p): p is Product & { price: number; price_id: string } => p.active && p.price !== null && p.price_id !== null)
+    return (snapshot?.products ?? []).filter((p) => p.active)
       .map((p) => ({ ...p, stock: stockTracking ? p.stock - (deductions.get(p.id) ?? 0) : p.stock }));
   }, [local, snapshot, stockTracking]);
   const search = normalize(query.trim());
   const shown = products.filter((p) => normalize([p.name, p.code, p.barcode, p.ingredient].join(" ")).includes(search));
-  const lines = products.filter((p) => cart[p.id]).map((p) => ({ ...p, quantity: cart[p.id] }));
+  const lines = products.filter((p): p is Product & { price: number; price_id: string } => Boolean(cart[p.id]) && p.price !== null && p.price > 0 && p.price_id !== null).map((p) => ({ ...p, quantity: cart[p.id] }));
   const subtotal = lines.reduce((sum, p) => sum.plus(new decimal(p.price).times(p.quantity)), new decimal(0));
   const discount = /^\d{1,12}(?:\.\d{1,2})?$/.test(discountInput) ? new decimal(discountInput) : new decimal(0);
   const invalidDiscount = (discountInput !== "" && !/^\d{1,12}(?:\.\d{1,2})?$/.test(discountInput)) ||
@@ -79,6 +80,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
   };
 
   function change(p: Product, delta: number) {
+    if (p.price === null || p.price <= 0 || p.price_id === null) { setError("El producto está pendiente de precio."); return; }
     const quantity = (cart[p.id] ?? 0) + delta;
     if (delta > 0 && (quantity > 10000 || (stockTracking && quantity > p.stock))) return;
     draft.current = null;
@@ -158,17 +160,17 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
           const match = shown.find((p) => [p.code, p.barcode].some((code) => code && normalize(code) === search));
           if (match && !busy) { change(match, 1); setQuery(""); }
         }}>
-          <Search size={18} /><input aria-label="Buscar medicamentos" placeholder="Buscar o escanear código…" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <Search size={18} /><input aria-label="Buscar medicamentos" placeholder="Buscar o escanear código…" value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(50); }} />
         </form>
         {shown.length === 0 && <Empty>No se encontraron medicamentos.</Empty>}
         <div className="product-list">
-          {shown.slice(0, 50).map((p) => <div className="product-row" key={p.id}>
+          {shown.slice(0, visibleCount).map((p) => <div className="product-row" key={p.id}>
             <div><strong>{p.name}</strong><small>{[p.code, p.presentation, p.strength].filter(Boolean).join(" · ")}</small></div>
-            <div className="product-price"><strong>{money(p.price)}</strong>{stockTracking && <small>{Math.max(0, p.stock)} disponibles</small>}</div>
-            <Button aria-label={"Añadir " + p.name} variant="outline" className="icon-button" disabled={busy || (cart[p.id] ?? 0) >= 10000 || (stockTracking && p.stock <= (cart[p.id] ?? 0))} onClick={() => change(p, 1)}><Plus size={18} /></Button>
+            <div className="product-price"><strong>{p.price === null || p.price <= 0 || p.price_id === null ? <span className="pill warning">Pendiente de precio</span> : money(p.price)}</strong>{stockTracking && <small>{Math.max(0, p.stock)} disponibles</small>}</div>
+            <Button aria-label={"Añadir " + p.name} variant="outline" className="icon-button" disabled={busy || p.price === null || p.price <= 0 || p.price_id === null || (cart[p.id] ?? 0) >= 10000 || (stockTracking && p.stock <= (cart[p.id] ?? 0))} onClick={() => change(p, 1)}><Plus size={18} /></Button>
           </div>)}
         </div>
-        {shown.length > 50 && <p className="muted">Se muestran 50 resultados. Refina la búsqueda para ver otros productos.</p>}
+        {shown.length > visibleCount && <div className="stack"><p className="muted">Se muestran {visibleCount} de {shown.length} productos. Puedes buscar por nombre o mostrar más.</p><Button variant="outline" onClick={() => setVisibleCount((n) => n + 50)}>Mostrar más productos</Button></div>}
       </section>
       <section className="card cart">
         <div className="section-title"><div><h2>Venta actual</h2><p>{lines.length} productos distintos</p></div><ShoppingCart size={22} /></div>

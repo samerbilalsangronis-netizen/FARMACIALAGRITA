@@ -2,14 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { pharmacyBrand, pharmacyDisplayName } from "@/lib/brand";
-import { decimal, displayDate, localDay, money, type Currency } from "@/lib/domain";
+import { decimal, displayDate, registerLabel, localDay, money, type Currency } from "@/lib/domain";
 import { rpc } from "@/lib/supabase";
 import { accessError, type Operation } from "@/lib/use-operation";
 import { DailyRegisters, type Summary } from "./registers";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
-type Shift = { id: string; register_no: number; cashier_name: string; business_day: string; started_at: string; ended_at: string | null;
+type Shift = { id: string; cashier_id?: string; register_no: number; cashier_name: string; business_day: string; started_at: string; ended_at: string | null;
   summary: Summary; closure: { revision: number; closed_at: string; summary: Summary } | null; changed: boolean };
 const count = new Intl.NumberFormat("es-VE");
 const equivalent = (n: number | string | null, c: Currency) => n === null ? "Sin tasa" : money(n, c);
@@ -50,6 +50,8 @@ function ShiftRegisters({ op }: { op: Operation }) {
   const pending = Boolean(op.local?.sales.some((s) => s.receipt.local));
   const shifts = data?.day === day ? data.shifts : [];
   const active = shifts.filter((s) => !s.ended_at);
+  const ownShift = (s: Shift) => s.cashier_id === op.profile?.id || (!admin && s.cashier_id === undefined);
+  const ownActive = active.filter(ownShift);
   const history = shifts.filter((s) => s.business_day === day && s.ended_at);
   const load = useCallback(async () => {
     const request = ++sequence.current;
@@ -82,12 +84,12 @@ function ShiftRegisters({ op }: { op: Operation }) {
       const settings = op.catalog?.settings;
       const first = entries[0];
       const report = createReportPdf({
-        title: individual ? "Cierre de turno · Caja " + first.register_no : "Cierres de turnos consolidados",
+        title: individual ? "Cierre de turno · " + registerLabel(first.register_no) : "Cierres de turnos consolidados",
         pharmacy: pharmacyDisplayName(settings?.pharmacy_name), logo: new Uint8Array(await image.arrayBuffer()), rif: pharmacyBrand.rif,
         address: settings?.address, phone: settings?.phone, period: "Fecha de apertura " + first.business_day, issuedAt: displayDate(new Date().toISOString()),
         register: { label: individual ? "CIERRE INDIVIDUAL" : "REPORTE DE ADMINISTRACIÓN", facts: individual ? [
-          { label: "CAJERA", value: first.cashier_name }, { label: "INICIO", value: displayDate(first.started_at) }, { label: "FIN", value: displayDate(first.ended_at!) },
-        ] : [{ label: "TURNOS CERRADOS", value: String(entries.length) }, { label: "CAJAS INCLUIDAS", value: String(new Set(entries.map((s) => s.register_no)).size) + " de 3" }, { label: "VENTAS", value: count.format(summaries.reduce((n,s) => n+s.sales,0)) }] },
+          { label: "RESPONSABLE", value: first.cashier_name }, { label: "INICIO", value: displayDate(first.started_at) }, { label: "FIN", value: displayDate(first.ended_at!) },
+        ] : [{ label: "TURNOS CERRADOS", value: String(entries.length) }, { label: "CAJAS INCLUIDAS", value: String(new Set(entries.map((s) => s.register_no)).size) + " de 4" }, { label: "VENTAS", value: count.format(summaries.reduce((n,s) => n+s.sales,0)) }] },
         coverage: "Cada turno se incluye una sola vez y pertenece a su fecha de apertura, aunque termine al día siguiente. Equivalentes a la tasa de cada venta. Productos antes de descuentos. " +
           (entries.some((s) => s.changed) ? "Hay movimientos posteriores pendientes de incorporar en alguno de los cierres. " : "") +
           (!individual && active.some((s) => s.business_day === day) ? "Hay turnos abiertos excluidos de este consolidado." : ""),
@@ -95,8 +97,8 @@ function ShiftRegisters({ op }: { op: Operation }) {
         indicators: [{ label: "VENTAS EN USD", value: equivalent(total("usd"),"USD") }, { label: "EQUIVALENTE EN BS.", value: equivalent(total("ves"),"VES") }, { label: "EQUIVALENTE EN COP", value: equivalent(total("cop"),"COP") }],
         sections: entries.flatMap((s) => {
           const summary = s.closure!.summary;
-          const prefix = "Caja " + s.register_no + " · " + displayDate(s.started_at);
-          return [{ title: prefix, columns: [{ label: "Cajera / fin / versión", width: 70 }, { label: "Ventas / unidades", width: 40 }, { label: "Total USD", width: 36 }, { label: "Descuento", width: 32 }],
+          const prefix = registerLabel(s.register_no) + " · " + displayDate(s.started_at);
+          return [{ title: prefix, columns: [{ label: "Responsable / fin / versión", width: 70 }, { label: "Ventas / unidades", width: 40 }, { label: "Total USD", width: 36 }, { label: "Descuento", width: 32 }],
             rows: [[s.cashier_name + " / " + displayDate(s.ended_at!) + " / v" + s.closure!.revision, summary.sales + " / " + summary.units, money(summary.usd), money(summary.discounts)]] },
             { title: "Productos del turno", columns: [{ label: "Producto", width: 96 }, { label: "Unidades", width: 28 }, { label: "Subtotal USD", width: 54 }], rows: summary.products.map((p) => [p.name, count.format(p.units), money(p.subtotal)]) },
             { title: "Cobros netos del turno", columns: [{ label: "Método", width: 78 }, { label: "Moneda", width: 32 }, { label: "Importe", width: 68 }], rows: summary.payments.map((p) => [op.catalog?.methods.find((m) => m.code === p.method)?.label ?? p.method, p.currency, money(p.net,p.currency)]) }];
@@ -108,15 +110,15 @@ function ShiftRegisters({ op }: { op: Operation }) {
   function card(s: Shift) {
     const summary = s.closure?.summary ?? s.summary;
     return <section className="card stack" key={s.id}>
-      <div className="section-title"><div><h3>Caja {s.register_no} · {s.cashier_name}</h3><p>Inicio: {displayDate(s.started_at)}</p><p>{s.ended_at ? "Fin: " + displayDate(s.ended_at) : "Continúa abierto, incluso después de medianoche."}</p></div><span className={"pill " + (s.changed ? "warning" : "green")}>{s.ended_at ? s.changed ? "Cierre por actualizar" : "Turno cerrado" : "Turno abierto"}</span></div>
+      <div className="section-title"><div><h3>{registerLabel(s.register_no)} · {s.cashier_name}</h3><p>Inicio: {displayDate(s.started_at)}</p><p>{s.ended_at ? "Fin: " + displayDate(s.ended_at) : "Continúa abierto, incluso después de medianoche."}</p></div><span className={"pill " + (s.changed ? "warning" : "green")}>{s.ended_at ? s.changed ? "Cierre por actualizar" : "Turno cerrado" : "Turno abierto"}</span></div>
       <div className="list-line"><span>Ventas / unidades</span><strong>{count.format(summary.sales)} / {count.format(summary.units)}</strong></div>
       <div className="list-line"><span>Total en USD</span><strong>{money(summary.usd)}</strong></div>
       <div className="list-line"><span>Equivalente en Bs.</span><strong>{equivalent(summary.ves,"VES")}</strong></div>
       <div className="list-line"><span>Equivalente en COP</span><strong>{equivalent(summary.cop,"COP")}</strong></div>
-      {s.changed && <Notice>Se sincronizaron ventas o anulaciones después del cierre. La cajera puede actualizarlo sin duplicar el turno.</Notice>}
+      {s.changed && <Notice>Se sincronizaron ventas o anulaciones después del cierre. Su responsable puede actualizarlo sin duplicar el turno.</Notice>}
       <div className="actions">
         {s.closure && <Button variant="outline" disabled={busy} onClick={() => void download([s],true)}><Download size={17} /> PDF del turno</Button>}
-        {!admin && (!s.ended_at || s.changed) && <Button disabled={busy || pending || op.connection !== "online"} onClick={() => setConfirm(s.id)}>{s.ended_at ? "Actualizar cierre" : "Cerrar turno"}</Button>}
+        {ownShift(s) && (!s.ended_at || s.changed) && <Button disabled={busy || pending || op.connection !== "online"} onClick={() => setConfirm(s.id)}>{s.ended_at ? "Actualizar cierre" : "Cerrar turno"}</Button>}
       </div>
       {s.closure && <small>Versión {s.closure.revision} · {displayDate(s.closure.closed_at)}</small>}
       {confirm === s.id && <div className="stack"><p>¿Confirmar {s.ended_at ? "la actualización de este cierre" : "el cierre de este turno"}? Incluye {s.summary.sales} ventas sincronizadas. Luego podrás iniciar otro turno.</p><div className="actions"><Button disabled={busy || pending || op.connection !== "online"} onClick={() => void change(s.id)}>Confirmar cierre</Button><Button variant="ghost" disabled={busy} onClick={() => setConfirm(null)}>Cancelar</Button></div></div>}
@@ -129,7 +131,7 @@ function ShiftRegisters({ op }: { op: Operation }) {
     {pending && <Notice>Sincroniza las ventas pendientes de este dispositivo antes de iniciar o cerrar un turno. Revisa también otros equipos que usen esta misma caja.</Notice>}
     <div className="toolbar"><Field label="Fecha de apertura"><input type="date" value={day} max={today} onChange={(e) => { if(e.target.value) { setDay(e.target.value); setConfirm(null); } }} /></Field><Button variant="outline" disabled={!connected || busy} onClick={() => void load()}><RefreshCw size={17} /> Actualizar</Button>
       {admin && <Button disabled={!connected || busy || !history.length} onClick={() => void download(history)}><Download size={17} /> PDF consolidado de turnos</Button>}
-      {!admin && data?.day === day && !active.length && <Button disabled={busy || pending || op.connection !== "online"} onClick={() => void change()}>Iniciar turno</Button>}
+      {data?.day === day && !ownActive.length && <Button disabled={busy || pending || op.connection !== "online"} onClick={() => void change()}>Iniciar turno</Button>}
     </div>
     {active.length > 0 && <><h2>Turnos abiertos</h2><div className="register-grid">{active.map(card)}</div></>}
     <h2>Historial de turnos · {day}</h2>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { pharmacyBrand, pharmacyDisplayName } from "@/lib/brand";
-import { decimal, displayDate, localDay, money, type Currency } from "@/lib/domain";
+import { decimal, displayDate, registerLabel, localDay, money, type Currency } from "@/lib/domain";
 import type { ReportSection } from "@/lib/report-pdf";
 import { rpc } from "@/lib/supabase";
 import { accessError, type Operation } from "@/lib/use-operation";
@@ -105,7 +105,7 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
             const name = box.closure?.cashier_name ?? box.username;
             const state = box.closure ? status(box) + " · v" + box.closure.revision : status(box);
             return [
-              "Caja " + box.register_no + (name ? " / " + name : ""), state,
+              registerLabel(box.register_no) + (name ? " / " + name : ""), state,
               summary ? count.format(summary.sales) : "—", summary ? count.format(summary.units) : "—",
               summary ? money(summary.discounts) : "—", summary ? money(summary.usd) : "—",
             ];
@@ -115,11 +115,11 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
 
       for (const { register_no: box, closure: { summary, closed_at, revision } } of entries) {
         if (only === undefined) sections.push({
-          title: "Caja " + box + " · Datos del cierre",
+          title: registerLabel(box) + " · Datos del cierre",
           columns: [{ label: "Fecha y hora", width: 55 }, right("Versión", 23), right("Equiv. Bs.", 50), right("Equiv. COP", 50)],
           rows: [[displayDate(closed_at), String(revision), equivalent(summary.ves, "VES"), equivalent(summary.cop, "COP")]],
         });
-        const prefix = only === undefined ? "Caja " + box + " · " : "";
+        const prefix = only === undefined ? registerLabel(box) + " · " : "";
         sections.push({
           title: prefix + "Productos vendidos",
           columns: [{ label: "Producto", width: 96 }, right("Unidades", 28), right("Subtotal USD", 54)],
@@ -139,13 +139,13 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
         { label: "VENTAS / UNIDADES", value: count.format(sales) + " / " + count.format(units) },
         { label: "DESCUENTOS", value: money(individual.summary.discounts) },
       ] : [
-        { label: "CAJAS INCLUIDAS", value: entries.length + " de 3" },
+        { label: "CAJAS INCLUIDAS", value: entries.length + " de " + (boxes?.some((b) => b.register_no === 4) ? 4 : 3) },
         { label: "VENTAS", value: count.format(sales) },
         { label: "UNIDADES", value: count.format(units) },
       ];
       const settings = op.catalog?.settings;
       const report = createReportPdf({
-        title: only === undefined ? "Cierre diario consolidado" : "Cierre diario · Caja " + only,
+        title: only === undefined ? "Cierre diario consolidado" : "Cierre diario · " + registerLabel(only),
         pharmacy: pharmacyDisplayName(settings?.pharmacy_name), logo: new Uint8Array(await image.arrayBuffer()), rif: pharmacyBrand.rif,
         address: settings?.address, phone: settings?.phone, period: "Fecha de operación " + day, issuedAt: displayDate(new Date().toISOString()),
         register: { label: individual ? "CIERRE INDIVIDUAL" : "REPORTE DE ADMINISTRACIÓN", facts },
@@ -183,7 +183,7 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
         const live = box.summary;
         const summary = dashboard ? live : box.closure?.summary ?? live;
         return <section className="card stack" key={box.register_no}>
-          <div className="section-title"><div><h3>Caja {box.register_no}</h3><p>{box.username ?? "Sin cajera asignada"}</p></div>
+          <div className="section-title"><div><h3>{registerLabel(box.register_no)}</h3><p>{box.username ?? "Sin cajera asignada"}</p></div>
             <div className="actions">
               <span className={"pill " + (box.changed ? "warning" : box.closure ? "green" : "")}>{dashboard ? "Ventas del día" : status(box)}</span>
               {!dashboard && box.closure && <Button variant={admin ? "outline" : "default"} disabled={busy}

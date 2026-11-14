@@ -455,3 +455,45 @@ test("calcula y guarda el precio desde costo y porcentaje y lo muestra en caja",
   await page.getByLabel("Precio de costo USD",{exact:true}).fill("20");await expect(page.getByLabel("Precio de venta USD",{exact:true})).toHaveValue("26.00");
 });
 
+
+test('catálogo de cajera muestra pendientes de precio y permite recorrer todos los productos',async({context,page})=>{
+ const pending={...catalog.products[0],id:'pending-id',code:'PEND',barcode:'999',name:'Medicamento sin precio',price:null,price_id:null};
+ const pendingCatalog={...catalog,settings:{...catalog.settings,stock_tracking:false},products:[...catalog.products,pending,...Array.from({length:55},(_,i)=>({...pending,id:'p-'+i,code:'M'+i,name:'Medicamento pendiente '+i}))]};
+ await context.route('**/api/login',r=>r.fulfill({json:{access_token:jwt,refresh_token:'fixture'}}));
+ await context.route('https://supabase-fixture.example.com/**',async r=>{
+  const path=new URL(r.request().url()).pathname;let result:unknown=[];
+  if(path==='/auth/v1/user')result={user};if(path==='/rest/v1/profiles')result=profile;if(path.endsWith('/rpc/catalog'))result=pendingCatalog;
+  await r.fulfill({json:result});
+ });
+ await page.goto('/');await page.getByLabel('Nombre de usuario').fill('caja1');await page.getByLabel('Contraseña').fill('fixture');await page.getByRole('button',{name:'Ingresar',exact:true}).click();
+ await page.getByRole('button',{name:'Punto de venta',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Añadir Medicamento sin precio',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'Mostrar más productos',exact:true}).click();await expect(page.getByText('Medicamento pendiente 54',{exact:true})).toBeVisible();
+ await page.getByLabel('Buscar medicamentos',{exact:true}).fill('999');await page.getByLabel('Buscar medicamentos',{exact:true}).press('Enter');
+ await expect(page.getByText('El producto está pendiente de precio.',{exact:true})).toBeVisible();await expect(page.getByText('Agrega un medicamento para empezar.',{exact:true})).toBeVisible();
+ await expect(page.getByText('Pendiente de precio',{exact:true}).first()).toBeVisible();
+});
+
+test('administradora abre y cierra su turno y descarga consolidado con Administración',async({context,page},testInfo)=>{
+ const day=new Date().toLocaleDateString('en-CA',{timeZone:'America/Caracas'});
+ const summary={sales:1,units:1,usd:5,ves:1250,cop:20000,without_rate:0,discounts:0,products:[{product_id:productId,name:'Acetaminofén',units:1,subtotal:5}],payments:[{currency:'USD',method:'cash',net:5}]};
+ const shifts=[1,2,3].map(n=>({id:crypto.randomUUID(),cashier_id:'other-'+n,register_no:n,cashier_name:'caja'+n,business_day:day,started_at:issuedAt,ended_at:n===1?null:issuedAt,summary,closure:n===1?null:{revision:1,closed_at:issuedAt,summary},changed:false}));
+ const adminCatalog={...catalog,admin_shifts_enabled:true};let opens=0,closes=0;
+ await context.route('**/api/login',r=>r.fulfill({json:{access_token:jwt,refresh_token:'fixture'}}));
+ await context.route('https://supabase-fixture.example.com/**',async r=>{
+  const path=new URL(r.request().url()).pathname;let result:unknown=[];
+  if(path==='/auth/v1/user')result={user};if(path==='/rest/v1/profiles')result={...profile,role:'admin'};if(path.endsWith('/rpc/catalog'))result=adminCatalog;
+  if(path.endsWith('/rpc/register_shift_day'))result=shifts;
+  if(path.endsWith('/rpc/open_register_shift')){const {request_id}=r.request().postDataJSON();shifts.push({id:request_id,cashier_id:userId,register_no:4,cashier_name:'administradora',business_day:day,started_at:issuedAt,ended_at:null,summary,closure:null,changed:false});opens++;result=request_id;}
+  if(path.endsWith('/rpc/close_register_shift')){const {shift}=r.request().postDataJSON();const s=shifts.find(s=>s.id===shift)!;expect(s.cashier_id).toBe(userId);s.ended_at=issuedAt;s.closure={revision:1,closed_at:issuedAt,summary};closes++;result=1;}
+  await r.fulfill({json:result});
+ });
+ await page.goto('/');await page.getByLabel('Nombre de usuario').fill('admin');await page.getByLabel('Contraseña').fill('fixture');await page.getByRole('button',{name:'Ingresar',exact:true}).click();
+ await page.getByRole('button',{name:'Cierres diarios',exact:true}).click();await expect(page.getByRole('heading',{name:'Caja 1 · caja1',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Cerrar turno',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'Iniciar turno',exact:true}).click();await expect(page.getByRole('heading',{name:'Administración · administradora',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Cerrar turno',exact:true})).toHaveCount(1);await page.getByRole('button',{name:'Cerrar turno',exact:true}).click();await page.getByRole('button',{name:'Confirmar cierre',exact:true}).click();
+ await expect(page.getByText('Cierre del turno guardado. Ya puedes descargar su PDF.',{exact:true})).toBeVisible();
+ const downloading=page.waitForEvent('download');await page.getByRole('button',{name:'PDF consolidado de turnos',exact:true}).click();const download=await downloading;await download.saveAs(testInfo.outputPath('consolidado-administracion.pdf'));
+ await page.screenshot({path:testInfo.outputPath('turno-administracion.png'),fullPage:true});expect(opens).toBe(1);expect(closes).toBe(1);
+});

@@ -16,7 +16,8 @@ export type Settings = {
 };
 export type Rate = { id: string; ves: number; cop: number; created_at: string };
 export type Method = { code: string; label: string };
-export type Catalog = { simple_pricing_enabled?: boolean; pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
+export const registerLabel = (register: number) => register === 4 ? "Administración" : "Caja " + register;
+export type Catalog = { admin_shifts_enabled?: boolean; simple_pricing_enabled?: boolean; pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
 export type Grant = { shift_id?: string | null; shift_required?: boolean; id: string; cashier_id: string; issued_at: string; expires_at: string; rate_hours: number; stale_policy: "confirm" | "block"; catalog: Catalog };
 export type Customer = { id: string; name: string; document: string; phone?: string | null; notes?: string | null };
 export type Payment = { currency: Currency; method: string; amount: string; change_amount: string };
