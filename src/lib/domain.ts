@@ -10,13 +10,13 @@ export type Product = {
   stock: number; min_stock: number; batch: string | null; expiration: string | null; active: boolean; updated_at: string;
 };
 export type Settings = {
-  stock_tracking?: boolean;
+  stock_tracking?: boolean; markup_percent?: number;
   pharmacy_name: string; address: string; phone: string; offline_hours: number;
   rate_hours: number; stale_policy: "confirm" | "block";
 };
 export type Rate = { id: string; ves: number; cop: number; created_at: string };
 export type Method = { code: string; label: string };
-export type Catalog = { pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
+export type Catalog = { simple_pricing_enabled?: boolean; pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
 export type Grant = { shift_id?: string | null; shift_required?: boolean; id: string; cashier_id: string; issued_at: string; expires_at: string; rate_hours: number; stale_policy: "confirm" | "block"; catalog: Catalog };
 export type Customer = { id: string; name: string; document: string; phone?: string | null; notes?: string | null };
 export type Payment = { currency: Currency; method: string; amount: string; change_amount: string };

@@ -175,7 +175,9 @@ export function useOperation() {
           const failure = [...results.values()].find((receipt) => receipt.local);
           const rateChanged = currentCatalog.rate?.id !== stored.grant.catalog.rate?.id;
           const modeChanged = currentCatalog.settings.stock_tracking !== stored.grant.catalog.settings.stock_tracking ||
-            currentCatalog.pricing_enabled !== stored.grant.catalog.pricing_enabled;
+            currentCatalog.pricing_enabled !== stored.grant.catalog.pricing_enabled ||
+            currentCatalog.simple_pricing_enabled !== stored.grant.catalog.simple_pricing_enabled ||
+            currentCatalog.settings.markup_percent !== stored.grant.catalog.settings.markup_percent;
           const storedPrices = new Map(stored.grant.catalog.products.map((p) => [p.id, p.price_id]));
           const priceChanged = currentCatalog.products.length !== storedPrices.size ||
             currentCatalog.products.some((p) => !storedPrices.has(p.id) || storedPrices.get(p.id) !== p.price_id);

@@ -98,3 +98,11 @@ La migración `202611140009_costos_ganancia.sql` no cambia precios existentes. A
 Los productos anteriores conservan su precio manual hasta guardar costos. Se puede volver a precio manual desmarcando el cálculo. El administrador ve costo y porcentaje en inventario; las cajeras reciben solo el precio de venta. Los costos se guardan en una tabla privada con RLS y sin permisos para clientes anónimos o autenticados. El servidor recalcula el precio y conserva el historial de precios para las ventas pendientes offline. La sincronización renueva el catálogo cuando cambian los precios. Un dispositivo sin conexión conserva su autorización y precios hasta sincronizar.
 
 La marca **Powered by Netlify** se desactivó para este proyecto desde **Project configuration → General → Powered by Netlify badge**; no se oculta mediante CSS ni requiere pagar un plan.
+
+## Inventario simple y ganancia general (010)
+
+Aplica `202611140010_inventario_simple.sql` antes de usar la nueva edición. Configuración incluye **Porcentaje de ganancia (%)**, inicialmente 25. El administrador edita solo **Nombre**, **Precio de costo USD** y consulta **Precio de venta USD**, calculado con redondeo de dos decimales. Los códigos nuevos se generan automáticamente. El servidor aplica el porcentaje vigente e impide guardar un formulario que todavía tenga un porcentaje anterior.
+
+Cambiar el porcentaje recalcula en una transacción los productos con costo registrado; los productos antiguos sin costo conservan su precio de venta. No se interpreta un precio de venta anterior como costo. Al guardar un costo, el producto pasa al porcentaje general. Los costos siguen siendo privados para el administrador. Los dispositivos sin conexión conservan sus precios autorizados hasta sincronizar.
+
+La migración activa todos los productos existentes sin modificar sus precios ni existencias. Los activos sin precio continúan pendientes de precio y no se pueden cobrar hasta configurar uno. La interfaz oculta los metadatos retirados del formulario; su información histórica permanece en la base y no se sobrescribe al editar el nombre o costo. La activación masiva queda registrada en auditoría. Los precios históricos y comprobantes se conservan.

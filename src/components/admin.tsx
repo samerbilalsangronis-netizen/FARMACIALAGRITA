@@ -42,6 +42,20 @@ export function Settings({ op }: { op: Operation }) {
     <Heading label="ADMINISTRACIÓN" title="Configuración">Gestiona las tasas, los métodos de pago y las reglas de operación.</Heading>
     {op.connection === "offline" && <Notice>Conéctate al servidor para modificar la configuración.</Notice>}
     {error && <Notice>{error}</Notice>}{success && <Notice success>{success}</Notice>}
+    {settings && op.catalog?.simple_pricing_enabled && <section className="card stack">
+      <h2>Porcentaje de ganancia</h2>
+      <p className="muted">Se aplica sobre el precio de costo. Al cambiarlo se recalculan los precios de los productos con costo registrado; los demás conservan su precio actual.</p>
+      <form className="stack" key={settings.markup_percent} onSubmit={(event) => void save(event, async (data) => {
+        const value = String(data.get("markup_percent") ?? "").trim().replace(",", ".");
+        if (!/^\d{1,5}(?:\.\d{1,4})?$/.test(value) || new decimal(value).gt(10000)) throw new Error("Indica un porcentaje entre 0 y 10000, con hasta cuatro decimales.");
+        await rpc("save_markup_percent", { percentage: value, expected: settings.markup_percent ?? 25 });
+        await op.sync(true);
+      }, "Porcentaje guardado y precios con costo actualizado recalculados.")}>
+        <Field label="Porcentaje de ganancia (%)"><input name="markup_percent" inputMode="decimal" defaultValue={settings.markup_percent ?? 25} required /></Field>
+        <p className="muted">Ejemplo: costo USD 10 + 25 % = precio de venta USD 12,50. Las cajeras sin conexión recibirán los precios nuevos al sincronizar.</p>
+        <div><Button type="submit" disabled={busy || op.connection === "offline"}>Guardar porcentaje</Button></div>
+      </form>
+    </section>}
     <div className="split">
       <section className="card stack">
         <h2>Tasas de cambio</h2>

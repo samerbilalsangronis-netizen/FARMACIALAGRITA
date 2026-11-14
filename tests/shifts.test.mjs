@@ -13,7 +13,7 @@ test("Turnos: dos cierres independientes, noche, permisos, reintentos y sincroni
     grant usage on schema auth to authenticated;
     insert into auth.users values('${admin}','a@x'),('${cashier}','c@x'),('${other}','o@x');`);
   const dir = new URL("../supabase/migrations/",import.meta.url);
-  for (const name of (await readdir(dir)).filter(name=>!name.includes("008") && !name.includes("009")).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
+  for (const name of (await readdir(dir)).filter(name=>!name.includes("008") && !name.includes("009") && !name.includes("010")).sort()) await db.exec(await readFile(new URL(name,dir),"utf8"));
   await db.exec(`insert into public.profiles(id,username,role,register_no) values('${admin}','admin','admin',null),('${cashier}','caja3','cashier',3),('${other}','caja2','cashier',2);`);
   const as = async (id) => { await db.exec("reset role"); await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]); await db.exec("set role authenticated"); };
   const rpc = async (expr,args=[]) => (await db.query("select "+expr+" as r",args)).rows[0].r;

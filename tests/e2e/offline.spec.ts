@@ -154,7 +154,7 @@ test("registra cliente y venta offline, reabre la PWA y sincroniza una sola vez"
 });
 
 test("conserva el formulario de un producto nuevo mientras se sincroniza el inventario", async ({ context, page }) => {
-  const currentCatalog = { ...catalog, products: [...catalog.products] };
+  const currentCatalog = { ...catalog, simple_pricing_enabled: true, settings: {...catalog.settings, markup_percent:25}, products: catalog.products.map(p=>({...p,net_cost:null as number|null,markup_percent:null as number|null})) };
   let holdSync: Promise<void> | undefined;
   let saveCount = 0;
   let adjustmentCount = 0;
@@ -179,25 +179,16 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
       expect(reason).toBe("Conteo físico de prueba"); expect(delta).toBe(2); adjustmentCount++;
       currentCatalog.products.find((p) => p.id === product)!.stock += delta;
     }
-    if (path.endsWith("/rpc/save_product")) {
-      const { data, expected } = request.postDataJSON();
-      saveCount++;
-      const existing = currentCatalog.products.find((product) => product.code === data.code);
+    if (path.endsWith("/rpc/save_simple_product")) {
+      const { data, expected } = request.postDataJSON(); saveCount++;
+      expect(data).not.toHaveProperty("stock"); expect(data.expected_markup).toBe(25);
+      const existing = currentCatalog.products.find((product) => product.id === data.id);
       if (existing) {
-        expect(expected).toBe(issuedAt);
-        expect(data).toMatchObject({ code: "PRUEBA-001", name: "Producto nuevo", price: "4.25" });
-        expect(data).not.toHaveProperty("stock");
-        existing.price = Number(data.price);
-        result = existing.id;
+        expect(expected).toBe(issuedAt);expect(data.net_cost).toBe("4.25");
+        existing.price=5.31;existing.net_cost=4.25;result=existing.id;
       } else {
-        expect(expected).toBeNull();
-        expect(data).toMatchObject({ code: "PRUEBA-001", name: "Producto nuevo", price: "3.50", stock: "8" });
-        const id = crypto.randomUUID();
-        currentCatalog.products.push({
-          ...catalog.products[0], id, price_id: crypto.randomUUID(), code: data.code,
-          name: data.name, price: Number(data.price), stock: Number(data.stock), updated_at: issuedAt,
-        });
-        result = id;
+        expect(expected).toBeNull();expect(data.net_cost).toBe("3.50");
+        const id=crypto.randomUUID(); currentCatalog.products.push({...catalog.products[0],id,price_id:crypto.randomUUID(),code:"PRUEBA-001",name:data.name,price:4.38,net_cost:3.5,markup_percent:25,stock:0,updated_at:issuedAt});result=id;
       }
     }
     await route.fulfill({ json: result, headers: { "Access-Control-Allow-Origin": "*" } });
@@ -215,7 +206,7 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   await expect(page.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
   await page.getByRole("button", { name: "Inventario", exact: true }).click();
   await page.getByRole("button", { name: "Nuevo producto" }).click();
-  await page.getByLabel("Código interno", { exact: true }).fill("PRUEBA-001");
+  await expect(page.getByLabel("Código interno", { exact: true })).toHaveCount(0);
   await page.getByLabel("Nombre", { exact: true }).fill("Producto nuevo");
 
   let releaseSync!: () => void;
@@ -231,11 +222,11 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   await expect(page.getByRole("status").filter({ hasText: "En línea" })).toBeVisible();
   await context.setOffline(true);
   await expect(page.getByRole("button", { name: "Guardar producto" })).toBeDisabled();
-  await expect(page.getByLabel("Código interno", { exact: true })).toHaveValue("PRUEBA-001");
+  await expect(page.getByLabel("Nombre", { exact: true })).toHaveValue("Producto nuevo");
   await context.setOffline(false);
   await expect(page.getByRole("button", { name: "Guardar producto" })).toBeEnabled();
-  await page.getByLabel("Precio USD", { exact: true }).fill("3,50");
-  await page.getByLabel("Existencias", { exact: true }).fill("8");
+  await page.getByLabel("Precio de costo USD", { exact: true }).fill("3,50");
+  await expect(page.getByLabel("Precio de venta USD", { exact: true })).toHaveValue("4.38");
   await page.getByRole("button", { name: "Guardar producto" }).click();
   await expect(page.getByText("Producto registrado.", { exact: true })).toBeVisible();
   const row = page.getByRole("row").filter({ has: page.getByText("Producto nuevo", { exact: true }) });
@@ -244,15 +235,15 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   await row.getByRole("button", { name: "Editar" }).click();
   const editor = row.locator("xpath=following-sibling::tr[1]");
   await expect(editor.getByRole("heading", { name: "Editar Producto nuevo" })).toBeFocused();
-  await editor.getByLabel("Precio USD", { exact: true }).fill("4,25");
+  await editor.getByLabel("Precio de costo USD", { exact: true }).fill("4,25");
   await editor.getByRole("button", { name: "Guardar producto" }).click();
-  await expect(row).toContainText("4,25");
+  await expect(row).toContainText("5,31");
   expect(saveCount).toBe(2);
   const totalUnits = page.getByText("Unidades en existencia", {exact:true}).locator("..");
   const valuation = page.getByText("Valor del inventario en USD", {exact:true}).locator("..");
-  await expect(totalUnits).toContainText("11"); await expect(valuation).toContainText("49,00");
+  await expect(totalUnits).toContainText("3"); await expect(valuation).toContainText("15,00");
   await page.getByLabel("Filtrar inventario").fill("PRUEBA-001");
-  await expect(totalUnits).toContainText("11"); await expect(valuation).toContainText("49,00");
+  await expect(totalUnits).toContainText("3"); await expect(valuation).toContainText("15,00");
   await row.getByRole("button", {name:"Ajustar",exact:true}).click();
   const adjustment = row.locator("xpath=following-sibling::tr[1]");
   await expect(adjustment.getByRole("heading",{name:"Ajustar existencias de Producto nuevo"})).toBeFocused();
@@ -261,7 +252,7 @@ test("conserva el formulario de un producto nuevo mientras se sincroniza el inve
   await adjustment.getByRole("button",{name:"Registrar ajuste"}).click();
   await expect(page.getByText("Movimiento guardado en el inventario.",{exact:true})).toBeVisible();
   expect(adjustmentCount).toBe(1);
-  await expect(totalUnits).toContainText("13"); await expect(valuation).toContainText("57,50");
+  await expect(totalUnits).toContainText("5"); await expect(valuation).toContainText("25,62");
 });
 
 test("cada cajera cierra su caja y la administración descarga los tres cierres", async ({ browser }, testInfo) => {
@@ -401,7 +392,7 @@ test("administración descarga un consolidado de seis turnos de tres cajas",asyn
 
 
 test("catálogo sin stock oculta existencias y permite editar precios",async({context,page})=>{
-  const noStockCatalog={...catalog,settings:{...catalog.settings,stock_tracking:false},products:catalog.products.map(p=>({...p,stock:0}))};
+  const noStockCatalog={...catalog,simple_pricing_enabled:true,settings:{...catalog.settings,stock_tracking:false,markup_percent:25},products:catalog.products.map(p=>({...p,stock:0}))};
   let saves=0;
   await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
   await context.route("https://supabase-fixture.example.com/**",async r=>{
@@ -409,9 +400,9 @@ test("catálogo sin stock oculta existencias y permite editar precios",async({co
     if(path==="/auth/v1/user")result={user};
     if(path==="/rest/v1/profiles")result={...profile,role:"admin"};
     if(path.endsWith("/rpc/catalog"))result=noStockCatalog;
-    if(path.endsWith("/rpc/save_product")){
+    if(path.endsWith("/rpc/save_simple_product")){
       const {data}=r.request().postDataJSON();expect(data).not.toHaveProperty("stock");expect(data).not.toHaveProperty("min_stock");
-      expect(data.price).toBe("7.25");noStockCatalog.products[0].price=7.25;saves++;result=productId;
+      expect(data.net_cost).toBe("7.25");expect(data.expected_markup).toBe(25);noStockCatalog.products[0].price=9.06;saves++;result=productId;
     }
     await r.fulfill({json:result});
   });
@@ -422,12 +413,12 @@ test("catálogo sin stock oculta existencias y permite editar precios",async({co
   await expect(page.getByRole("button",{name:"Ajustar",exact:true})).toHaveCount(0);
   await page.getByRole("button",{name:"Editar",exact:true}).click();
   await expect(page.getByLabel("Existencias",{exact:true})).toHaveCount(0);await expect(page.getByLabel("Stock mínimo",{exact:true})).toHaveCount(0);
-  await page.getByLabel("Precio USD",{exact:true}).fill("7,25");await page.getByRole("button",{name:"Guardar producto"}).click();
-  await expect(page.getByRole("cell").filter({hasText:"7,25"})).toBeVisible();expect(saves).toBe(1);
+  await page.getByLabel("Precio de costo USD",{exact:true}).fill("7,25");await page.getByRole("button",{name:"Guardar producto"}).click();
+  await expect(page.getByRole("cell").filter({hasText:"9,06"})).toBeVisible();expect(saves).toBe(1);
 });
 
 test("calcula y guarda el precio desde costo y porcentaje y lo muestra en caja",async({context,page})=>{
-  const pricedCatalog={...catalog,pricing_enabled:true,settings:{...catalog.settings,stock_tracking:false},products:catalog.products.map(p=>({...p,stock:0,net_cost:null as number|null,markup_percent:null as number|null}))};
+  const pricedCatalog={...catalog,pricing_enabled:true,simple_pricing_enabled:true,settings:{...catalog.settings,stock_tracking:false,markup_percent:25},products:catalog.products.map(p=>({...p,stock:0,net_cost:null as number|null,markup_percent:null as number|null}))};
   let saves=0;
   await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
   await context.route("https://supabase-fixture.example.com/**",async r=>{
@@ -435,20 +426,32 @@ test("calcula y guarda el precio desde costo y porcentaje y lo muestra en caja",
     if(path==="/auth/v1/user")result={user};
     if(path==="/rest/v1/profiles")result={...profile,role:"admin"};
     if(path.endsWith("/rpc/catalog"))result=pricedCatalog;
-    if(path.endsWith("/rpc/save_product")){
+    if(path.endsWith("/rpc/save_markup_percent")){
+      const {percentage,expected}=r.request().postDataJSON();expect(percentage).toBe("30");expect(expected).toBe(25);
+      pricedCatalog.settings.markup_percent=30;pricedCatalog.products[0].price=13;pricedCatalog.products[0].markup_percent=30;result=null;
+    }
+    if(path.endsWith("/rpc/save_simple_product")){
       const {data}=r.request().postDataJSON();
-      expect(data).toMatchObject({pricing_mode:"cost",net_cost:"10",markup_percent:"25",price:"12.50"});
+      expect(data).toMatchObject({net_cost:"10",expected_markup:25});expect(data).not.toHaveProperty("price");
       pricedCatalog.products[0].price=12.5;pricedCatalog.products[0].net_cost=10;pricedCatalog.products[0].markup_percent=25;saves++;result=productId;
     }
     await r.fulfill({json:result});
   });
   await page.goto("/");await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
   await page.getByRole("button",{name:"Inventario",exact:true}).click();await page.getByRole("button",{name:"Editar",exact:true}).click();
-  await page.getByRole("checkbox",{name:"Calcular precio desde costo y ganancia",exact:true}).check();
-  await page.getByLabel("Costo neto USD",{exact:true}).fill("10");await page.getByLabel("Ganancia sobre costo (%)",{exact:true}).fill("25");
+  await page.getByLabel("Precio de costo USD",{exact:true}).fill("10");
   await expect(page.getByLabel("Precio de venta USD",{exact:true})).toHaveValue("12.50");
+  await expect(page.getByLabel("Precio de venta USD",{exact:true})).toHaveAttribute("readonly", "");
+  for(const label of ["Código de barras","Principio activo","Concentración","Presentación","Categoría","Laboratorio","Lote","Vencimiento"]) await expect(page.getByLabel(label,{exact:true})).toHaveCount(0);
   await page.getByRole("button",{name:"Guardar producto",exact:true}).click();await expect(page.getByText("Producto actualizado.",{exact:true})).toBeVisible();expect(saves).toBe(1);
   const row=page.getByRole("row").filter({has:page.getByText("Acetaminofén",{exact:true})});await expect(row).toContainText("12,50");await expect(row).toContainText("25 %");
-  await page.getByRole("button",{name:"Editar",exact:true}).click();await expect(page.getByLabel("Costo neto USD",{exact:true})).toHaveValue("10");await page.getByRole("button",{name:"Cancelar",exact:true}).click();
+  await page.getByRole("button",{name:"Editar",exact:true}).click();await expect(page.getByLabel("Precio de costo USD",{exact:true})).toHaveValue("10");await page.getByRole("button",{name:"Cancelar",exact:true}).click();
   await page.getByRole("button",{name:"Punto de venta",exact:true}).click();await expect(page.getByText(/12,50/).first()).toBeVisible();await expect(page.getByText(/disponibles/)).toHaveCount(0);
+  await page.getByRole("button",{name:"Configuración",exact:true}).click();
+  await page.getByLabel("Porcentaje de ganancia (%)",{exact:true}).fill("30");await page.getByRole("button",{name:"Guardar porcentaje",exact:true}).click();
+  await expect(page.getByText("Porcentaje guardado y precios con costo actualizado recalculados.",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Inventario",exact:true}).click();await page.getByRole("button",{name:"Editar",exact:true}).click();
+  await expect(page.getByLabel("Precio de venta USD",{exact:true})).toHaveValue("13.00");
+  await page.getByLabel("Precio de costo USD",{exact:true}).fill("20");await expect(page.getByLabel("Precio de venta USD",{exact:true})).toHaveValue("26.00");
 });
+
