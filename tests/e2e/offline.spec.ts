@@ -541,7 +541,7 @@ test("dashboard muestra el turno completo de varios días y conserva importes le
  });
  await page.goto("/");await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
  const first=page.locator(".register-grid > section").filter({has:page.getByRole("heading",{name:"Caja 1",exact:true})});
- await expect(first.getByText("Turno cerrado",{exact:true})).toBeVisible();await expect(first.getByText("2 / 16",{exact:true})).toBeVisible();await expect(first).toContainText("Totales del turno completo");await expect(first).toContainText("14/11/26");
+ await expect(first.getByText("Turno cerrado",{exact:true})).toBeVisible();await expect(first.getByText("2 / 16",{exact:true})).toBeVisible();await expect(first).toContainText("Totales del turno completo");await expect(first.locator(".turn-period time").first()).toHaveAttribute("datetime","2026-11-14T12:29:00Z");
  await expect(page.getByText("Turno abierto",{exact:true})).toBeVisible();await expect(page.getByText("Sin turnos registrados",{exact:true})).toHaveCount(2);
  for(const width of [1280,1024,390]){
   await page.setViewportSize({width,height:1000});

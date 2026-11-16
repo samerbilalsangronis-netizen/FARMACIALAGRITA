@@ -8,6 +8,7 @@ import type { ReportSection } from "@/lib/report-pdf";
 import { rpc } from "@/lib/supabase";
 import { accessError, type Operation } from "@/lib/use-operation";
 import { CollectionTotals } from "./collection-totals";
+import { TurnPeriod } from "./turn-period";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
@@ -192,7 +193,7 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
               {!dashboard && box.closure && <Button variant={admin ? "outline" : "default"} disabled={busy}
                 onClick={() => void download(box.register_no)}><Download size={17} /> PDF de la caja</Button>}
             </div></div>
-          {dashboard && (turn ? <div><p>Inicio: {displayDate(turn.started_at)}</p><p>{turn.ended_at ? "Cierre: " + displayDate(turn.ended_at) : "Turno en curso"}</p><small>Totales del turno completo, sin recortar por fecha.</small></div> : <small>Esta caja todavía no tiene un turno registrado.</small>)}
+          {dashboard && (turn ? <div className="stack turn-period-wrap"><TurnPeriod startedAt={turn.started_at} endedAt={turn.ended_at} /><small>Totales del turno completo</small></div> : <small>Esta caja todavía no tiene un turno registrado.</small>)}
           {dashboard && box.changed && <Notice>Hay movimientos sincronizados después del cierre. Actualiza el cierre en Cierres diarios para incorporarlos en este resumen y en su PDF.</Notice>}
           <div className="list-line"><span>Ventas / unidades</span><strong>{count.format(summary.sales)} / {count.format(summary.units)}</strong></div>
           <CollectionTotals summaries={[summary]} /><small>Total de referencia de las ventas: {money(summary.usd)}.</small>
