@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { pharmacyBrand, pharmacyDisplayName } from "@/lib/brand";
-import { decimal, displayDate, registerLabel, localDay, money, type Currency } from "@/lib/domain";
+import { collectionTotals, displayDate, registerLabel, localDay, money, type Currency } from "@/lib/domain";
 import type { ReportSection } from "@/lib/report-pdf";
 import { rpc } from "@/lib/supabase";
 import { accessError, type Operation } from "@/lib/use-operation";
+import { CollectionTotals } from "./collection-totals";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
@@ -25,7 +26,6 @@ type Closure = { revision: number; closed_at: string; cashier_name: string; summ
 type Register = { register_no: number; username: string | null; summary: Summary; closure: Closure | null; changed: boolean };
 
 const count = new Intl.NumberFormat("es-VE");
-const equivalent = (value: number | string | null, currency: Currency) => value === null ? "Sin tasa" : money(value, currency);
 
 function status(box: Register) {
   if (box.changed) return "Cierre por actualizar";
@@ -90,16 +90,14 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
     try {
       const [{ createReportPdf }, image] = await Promise.all([import("@/lib/report-pdf"), fetch(pharmacyBrand.logo)]);
       if (!image.ok) throw new Error("No se pudo cargar el logo de FarmaWorld.");
-      const total = (currency: "usd" | "ves" | "cop") =>
-        entries.some(({ closure }) => closure.summary[currency] === null) ? null :
-          entries.reduce((sum, { closure }) => sum.plus(closure.summary[currency] ?? 0), new decimal(0)).toFixed(currency === "cop" ? 0 : 2);
+      const collected = collectionTotals(entries.map((e) => e.closure.summary));
       const right = (label: string, width: number) => ({ label, width, align: "right" as const });
       const sections: ReportSection[] = [];
       if (only === undefined) {
         sections.push({
           title: "Comparativo por caja",
           columns: [{ label: "Caja / cajera", width: 38 }, { label: "Estado", width: 35 }, right("Ventas", 18),
-            right("Unidades", 21), right("Descuento", 28), right("Total USD", 38)],
+            right("Unidades", 21), right("Descuento", 28), right("Referencia USD", 38)],
           rows: (boxes ?? []).map((box) => {
             const summary = box.closure?.summary;
             const name = box.closure?.cashier_name ?? box.username;
@@ -116,11 +114,12 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
       for (const { register_no: box, closure: { summary, closed_at, revision } } of entries) {
         if (only === undefined) sections.push({
           title: registerLabel(box) + " · Datos del cierre",
-          columns: [{ label: "Fecha y hora", width: 55 }, right("Versión", 23), right("Equiv. Bs.", 50), right("Equiv. COP", 50)],
-          rows: [[displayDate(closed_at), String(revision), equivalent(summary.ves, "VES"), equivalent(summary.cop, "COP")]],
+          columns: [{ label: "Fecha y hora", width: 55 }, right("Versión", 23), right("Cobrado Bs.", 50), right("Cobrado COP", 50)],
+          rows: [[displayDate(closed_at), String(revision), money(collectionTotals([summary]).VES, "VES"), money(collectionTotals([summary]).COP, "COP")]],
         });
         const prefix = only === undefined ? registerLabel(box) + " · " : "";
-        sections.push({
+        const net = collectionTotals([summary]);
+        sections.push({ title: prefix + "Cobros reales por moneda", columns: [{ label: "Dólares USD", width: 59 }, { label: "Bolívares VES", width: 59 }, { label: "Pesos COP", width: 60 }], rows: [[money(net.USD,"USD"),money(net.VES,"VES"),money(net.COP,"COP")]] }, {
           title: prefix + "Productos vendidos",
           columns: [{ label: "Producto", width: 96 }, right("Unidades", 28), right("Subtotal USD", 54)],
           rows: summary.products.map((p) => [p.name, count.format(p.units), money(p.subtotal)]),
@@ -150,12 +149,12 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
         address: settings?.address, phone: settings?.phone, period: "Fecha de operación " + day, issuedAt: displayDate(new Date().toISOString()),
         register: { label: individual ? "CIERRE INDIVIDUAL" : "REPORTE DE ADMINISTRACIÓN", facts },
         coverage: (individual && entries[0].changed ? "Este cierre tiene movimientos posteriores pendientes de incorporar. " : "") +
-          "Los equivalentes usan la tasa de cada venta. Los subtotales por producto se muestran antes de descuentos.",
-        summaryTitle: individual ? "Total vendido en la caja" : "Total vendido en las cajas incluidas",
+          "Los cobros se suman en su moneda original y descuentan el cambio. Los subtotales por producto se muestran en USD de referencia antes de descuentos.",
+        summaryTitle: "Cobros reales por moneda",
         indicators: [
-          { label: "VENTAS EN USD", value: equivalent(total("usd"), "USD") },
-          { label: "EQUIVALENTE EN BS.", value: equivalent(total("ves"), "VES") },
-          { label: "EQUIVALENTE EN COP", value: equivalent(total("cop"), "COP") },
+          { label: "VENTAS EN DÓLARES", value: money(collected.USD, "USD") },
+          { label: "VENTAS EN BS.", value: money(collected.VES, "VES") },
+          { label: "VENTAS EN PESOS", value: money(collected.COP, "COP") },
         ],
         sections,
       });
@@ -165,7 +164,7 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
   }
 
   return <>
-    {dashboard ? <div className="section-title"><div><h2>Ventas de hoy por caja</h2><p>Ventas sincronizadas. Equivalentes según la tasa de cada venta.</p></div></div> :
+    {dashboard ? <div className="section-title"><div><h2>Ventas de hoy por caja</h2><p>Cobros sincronizados en su moneda original, descontando el cambio.</p></div></div> :
       <Heading label="OPERACIÓN DE CAJA" title="Cierres diarios">{admin ? "Consulta los cierres de las tres cajas y descarga el consolidado." : "Revisa tus ventas sincronizadas y registra el cierre de tu caja."}</Heading>}
     {!dashboard && <div className="toolbar">
       <Field label="Fecha de operación"><input type="date" value={day} max={today} disabled={busy}
@@ -190,9 +189,7 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
                 onClick={() => void download(box.register_no)}><Download size={17} /> PDF de la caja</Button>}
             </div></div>
           <div className="list-line"><span>Ventas / unidades</span><strong>{count.format(summary.sales)} / {count.format(summary.units)}</strong></div>
-          <div className="list-line"><span>Total en USD</span><strong>{money(summary.usd)}</strong></div>
-          <div className="list-line"><span>Equivalente en Bs.</span><strong>{equivalent(summary.ves, "VES")}</strong></div>
-          <div className="list-line"><span>Equivalente en pesos</span><strong>{equivalent(summary.cop, "COP")}</strong></div>
+          <CollectionTotals summaries={[summary]} /><small>Total de referencia de las ventas: {money(summary.usd)}.</small>
           {summary.without_rate > 0 && <p className="muted">{summary.without_rate} ventas carecen de una tasa registrada.</p>}
           {!!summary.products.length && <details><summary>Ver productos vendidos</summary>
             {summary.products.map((p) => <div className="list-line" key={p.product_id + p.name}><span>{p.name}</span><strong>{count.format(p.units)}</strong></div>)}

@@ -2,9 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { pharmacyBrand, pharmacyDisplayName } from "@/lib/brand";
-import { decimal, displayDate, registerLabel, localDay, money, type Currency } from "@/lib/domain";
+import { collectionTotals, displayDate, registerLabel, localDay, money } from "@/lib/domain";
 import { rpc } from "@/lib/supabase";
 import { accessError, type Operation } from "@/lib/use-operation";
+import { CollectionTotals } from "./collection-totals";
 import { DailyRegisters, type Summary } from "./registers";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
@@ -12,7 +13,6 @@ import { Empty, Field, Heading, Notice } from "./ui/shared";
 type Shift = { id: string; cashier_id?: string; register_no: number; cashier_name: string; business_day: string; started_at: string; ended_at: string | null;
   summary: Summary; closure: { revision: number; closed_at: string; summary: Summary } | null; changed: boolean };
 const count = new Intl.NumberFormat("es-VE");
-const equivalent = (n: number | string | null, c: Currency) => n === null ? "Sin tasa" : money(n, c);
 
 export function Registers({ op, dashboard = false }: { op: Operation; dashboard?: boolean }) {
   const [supported, setSupported] = useState<boolean | null>(null);
@@ -80,7 +80,7 @@ function ShiftRegisters({ op }: { op: Operation }) {
       const [{ createReportPdf }, image] = await Promise.all([import("@/lib/report-pdf"), fetch(pharmacyBrand.logo)]);
       if (!image.ok) throw new Error("No se pudo cargar el logo.");
       const summaries = entries.map((s) => s.closure!.summary);
-      const total = (key: "usd" | "ves" | "cop") => summaries.some((s) => s[key] === null) ? null : summaries.reduce((n, s) => n.plus(s[key] ?? 0), new decimal(0)).toFixed(key === "cop" ? 0 : 2);
+      const collected = collectionTotals(summaries);
       const settings = op.catalog?.settings;
       const first = entries[0];
       const report = createReportPdf({
@@ -90,15 +90,16 @@ function ShiftRegisters({ op }: { op: Operation }) {
         register: { label: individual ? "CIERRE INDIVIDUAL" : "REPORTE DE ADMINISTRACIÓN", facts: individual ? [
           { label: "RESPONSABLE", value: first.cashier_name }, { label: "INICIO", value: displayDate(first.started_at) }, { label: "FIN", value: displayDate(first.ended_at!) },
         ] : [{ label: "TURNOS CERRADOS", value: String(entries.length) }, { label: "CAJAS INCLUIDAS", value: String(new Set(entries.map((s) => s.register_no)).size) + " de 4" }, { label: "VENTAS", value: count.format(summaries.reduce((n,s) => n+s.sales,0)) }] },
-        coverage: "Cada turno se incluye una sola vez y pertenece a su fecha de apertura, aunque termine al día siguiente. Equivalentes a la tasa de cada venta. Productos antes de descuentos. " +
+        coverage: "Cada turno se incluye una sola vez y pertenece a su fecha de apertura, aunque termine al día siguiente. Los importes por moneda son cobros reales netos de cambio, sin conversiones. Los productos se expresan en USD de referencia antes de descuentos. " +
           (entries.some((s) => s.changed) ? "Hay movimientos posteriores pendientes de incorporar en alguno de los cierres. " : "") +
           (!individual && active.some((s) => s.business_day === day) ? "Hay turnos abiertos excluidos de este consolidado." : ""),
-        summaryTitle: "Total de los turnos cerrados incluidos",
-        indicators: [{ label: "VENTAS EN USD", value: equivalent(total("usd"),"USD") }, { label: "EQUIVALENTE EN BS.", value: equivalent(total("ves"),"VES") }, { label: "EQUIVALENTE EN COP", value: equivalent(total("cop"),"COP") }],
+        summaryTitle: "Cobros reales por moneda · Turnos cerrados incluidos",
+        indicators: [{ label: "VENTAS EN DÓLARES", value: money(collected.USD,"USD") }, { label: "VENTAS EN BS.", value: money(collected.VES,"VES") }, { label: "VENTAS EN PESOS", value: money(collected.COP,"COP") }],
         sections: entries.flatMap((s) => {
           const summary = s.closure!.summary;
+          const net = collectionTotals([summary]);
           const prefix = registerLabel(s.register_no) + " · " + displayDate(s.started_at);
-          return [{ title: prefix, columns: [{ label: "Responsable / fin / versión", width: 70 }, { label: "Ventas / unidades", width: 40 }, { label: "Total USD", width: 36 }, { label: "Descuento", width: 32 }],
+          return [{ title: prefix + " · Cobros reales por moneda", columns: [{ label: "Dólares USD", width: 59 }, { label: "Bolívares VES", width: 59 }, { label: "Pesos COP", width: 60 }], rows: [[money(net.USD,"USD"),money(net.VES,"VES"),money(net.COP,"COP")]] }, { title: prefix, columns: [{ label: "Responsable / fin / versión", width: 70 }, { label: "Ventas / unidades", width: 40 }, { label: "Referencia USD", width: 36 }, { label: "Descuento", width: 32 }],
             rows: [[s.cashier_name + " / " + displayDate(s.ended_at!) + " / v" + s.closure!.revision, summary.sales + " / " + summary.units, money(summary.usd), money(summary.discounts)]] },
             { title: "Productos del turno", columns: [{ label: "Producto", width: 96 }, { label: "Unidades", width: 28 }, { label: "Subtotal USD", width: 54 }], rows: summary.products.map((p) => [p.name, count.format(p.units), money(p.subtotal)]) },
             { title: "Cobros netos del turno", columns: [{ label: "Método", width: 78 }, { label: "Moneda", width: 32 }, { label: "Importe", width: 68 }], rows: summary.payments.map((p) => [op.catalog?.methods.find((m) => m.code === p.method)?.label ?? p.method, p.currency, money(p.net,p.currency)]) }];
@@ -112,9 +113,8 @@ function ShiftRegisters({ op }: { op: Operation }) {
     return <section className="card stack" key={s.id}>
       <div className="section-title"><div><h3>{registerLabel(s.register_no)} · {s.cashier_name}</h3><p>Inicio: {displayDate(s.started_at)}</p><p>{s.ended_at ? "Fin: " + displayDate(s.ended_at) : "Continúa abierto, incluso después de medianoche."}</p></div><span className={"pill " + (s.changed ? "warning" : "green")}>{s.ended_at ? s.changed ? "Cierre por actualizar" : "Turno cerrado" : "Turno abierto"}</span></div>
       <div className="list-line"><span>Ventas / unidades</span><strong>{count.format(summary.sales)} / {count.format(summary.units)}</strong></div>
-      <div className="list-line"><span>Total en USD</span><strong>{money(summary.usd)}</strong></div>
-      <div className="list-line"><span>Equivalente en Bs.</span><strong>{equivalent(summary.ves,"VES")}</strong></div>
-      <div className="list-line"><span>Equivalente en COP</span><strong>{equivalent(summary.cop,"COP")}</strong></div>
+      <CollectionTotals summaries={[summary]} />
+      <small>Total de referencia de las ventas: {money(summary.usd)}. Los recuadros muestran el cobro real en cada moneda, descontando el cambio.</small>
       {s.changed && <Notice>Se sincronizaron ventas o anulaciones después del cierre. Su responsable puede actualizarlo sin duplicar el turno.</Notice>}
       <div className="actions">
         {s.closure && <Button variant="outline" disabled={busy} onClick={() => void download([s],true)}><Download size={17} /> PDF del turno</Button>}
@@ -133,6 +133,7 @@ function ShiftRegisters({ op }: { op: Operation }) {
       {admin && <Button disabled={!connected || busy || !history.length} onClick={() => void download(history)}><Download size={17} /> PDF consolidado de turnos</Button>}
       {data?.day === day && !ownActive.length && <Button disabled={busy || pending || op.connection !== "online"} onClick={() => void change()}>Iniciar turno</Button>}
     </div>
+    {data?.day === day && <section className="card stack"><h2>Cobros reales · Fecha de apertura {day}</h2><CollectionTotals summaries={shifts.filter((s) => s.business_day === day).map((s) => s.closure?.summary ?? s.summary)} /><small>Incluye los turnos visibles de esta fecha, abiertos y cerrados. Los importes se suman en su moneda original y descuentan el cambio.</small></section>}
     {active.length > 0 && <><h2>Turnos abiertos</h2><div className="register-grid">{active.map(card)}</div></>}
     <h2>Historial de turnos · {day}</h2>
     {history.length ? <div className="register-grid">{history.map(card)}</div> : <Empty>No hay turnos cerrados con esta fecha de apertura.</Empty>}

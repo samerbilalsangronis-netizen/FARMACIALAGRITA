@@ -218,3 +218,8 @@ td .pill{white-space:nowrap}
 .register-grid details summary{cursor:pointer}
 
 .inventory-total-value{font-size:clamp(1.6rem,3vw,2.2rem);line-height:1.15;color:var(--forest,#0d5345);font-weight:800}
+
+.currency-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.currency-total{display:grid;gap:8px;padding:13px;border:1px solid #cfe2e0;border-radius:10px;background:#eff7f3;min-width:0}
+.currency-total span{font-size:.78rem;color:#436157}.currency-total strong{font-size:1.08rem;color:#07513e;overflow-wrap:anywhere}
+@media(max-width:540px){.currency-totals{grid-template-columns:1fr}}

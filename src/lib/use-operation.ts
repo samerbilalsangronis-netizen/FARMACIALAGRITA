@@ -174,7 +174,9 @@ export function useOperation() {
           }
           const failure = [...results.values()].find((receipt) => receipt.local);
           const rateChanged = currentCatalog.rate?.id !== stored.grant.catalog.rate?.id;
-          const modeChanged = currentCatalog.settings.stock_tracking !== stored.grant.catalog.settings.stock_tracking ||
+          const modeChanged = currentCatalog.payment_rules_enabled !== stored.grant.catalog.payment_rules_enabled ||
+            JSON.stringify(currentCatalog.methods) !== JSON.stringify(stored.grant.catalog.methods) ||
+            currentCatalog.settings.stock_tracking !== stored.grant.catalog.settings.stock_tracking ||
             currentCatalog.pricing_enabled !== stored.grant.catalog.pricing_enabled ||
             currentCatalog.simple_pricing_enabled !== stored.grant.catalog.simple_pricing_enabled ||
             currentCatalog.admin_shifts_enabled !== stored.grant.catalog.admin_shifts_enabled ||

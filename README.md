@@ -114,3 +114,11 @@ Ejecuta `202611140011_turno_administracion.sql`. El catálogo autorizado incluye
 La caja lógica 4 se identifica como **Administración** y no cambia la asignación de caja1, caja2 o caja3. El administrador abre su turno desde **Cierres diarios**, prepara o sincroniza su dispositivo y puede vender en línea o sin conexión con esa autorización. Solo puede cerrar sus propios turnos; conserva la consulta de todos y el PDF consolidado incluye los turnos cerrados de Administración y de las tres cajas. Puede abrir varios turnos en un día y mantener un turno nocturno hasta su cierre. El dashboard muestra también Administración.
 
 Las ventas anteriores no se reasignan a turnos nuevos. Las ventas offline emitidas antes de la migración con una autorización antigua pueden sincronizarse; las nuevas ventas administrativas necesitan un turno abierto. Las ventas emitidas durante un turno pero sincronizadas tras el cierre permiten actualizar la versión del cierre, sin duplicar el turno. No se modifica inventario, precios ni comprobantes existentes.
+
+### Cobros y cierres por moneda (migración 012)
+
+Aplicar `supabase/migrations/202611160012_cambio_metodos_moneda.sql` antes de publicar esta versión. El punto de venta estima automáticamente el cambio en la moneda de cada pago y guarda el cobro neto (`recibido - cambio`). En pagos mixtos, aplica los pagos en el orden mostrado. Cada fila debe aportar un importe positivo; eliminar las filas sobrantes.
+
+Métodos admitidos: USD efectivo/Zelle; VES transferencia/pago móvil/punto de venta; COP efectivo/transferencia colombiana. Las autorizaciones anteriores conservan su validación original para sincronizar ventas pendientes. Actualizar y sincronizar los dispositivos con conexión para recibir la nueva autorización.
+
+Los cierres individuales, el consolidado PDF y las casillas de la fecha y del turno suman los pagos netos por su moneda original. El total USD de referencia se identifica por separado y no se convierte para presentar cobros en Bs. o COP. No se recalculan ni modifican ventas, precios, productos o cierres históricos.

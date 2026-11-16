@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
 import { Check, CircleMinus, Plus, ScanLine, Search, ShoppingCart, Trash2, UserPlus, UserRound } from "lucide-react";
-import { amountInCurrency, currencies, currencyScale, decimal, displayDate, money, normalize, paymentValue, type Currency, type Customer, type Payment, type Product, type QueuedSale, type Receipt } from "@/lib/domain";
+import { amountInCurrency, currencies, currencyScale, decimal, displayDate, money, normalize, paymentValue, paymentsWithEstimatedChange, methodsForCurrency, type Currency, type Customer, type Payment, type Product, type QueuedSale, type Receipt } from "@/lib/domain";
 import { expired } from "@/lib/vault";
 import { accessError, type Operation } from "@/lib/use-operation";
 import { Button } from "./ui/button";
@@ -66,8 +66,12 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
   const foreign = payments.some((p) => p.currency !== "USD");
   const localExpired = local ? expired(local) : false;
   const invalidCart = Object.keys(cart).length !== lines.length || lines.some((p) => p.quantity > 10000 || (stockTracking && p.stock < p.quantity));
-  const paymentValues = payments.map((line) => {
+  const settledPayments = paymentsWithEstimatedChange(payments, total.toFixed(2), rate);
+  const paymentValues = settledPayments.map((line) => {
     try { return new decimal(paymentValue(line, rate).usd); } catch { return new decimal(0); }
+  });
+  const invalidPayments = settledPayments.some((line) => {
+    try { paymentValue(line, rate); return !methodsForCurrency(methods, line.currency).some((m) => m.code === line.method); } catch { return true; }
   });
   const paid = paymentValues.reduce((sum, value) => sum.plus(value), new decimal(0));
   const balance = total.minus(paid);
@@ -110,7 +114,8 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
       if (foreign && stale && (local.grant.stale_policy === "block" || !staleConfirmed)) {
         throw new Error("Revisa la vigencia de la tasa antes de confirmar.");
       }
-      const applied = payments.map((p) => paymentValue(p, rate));
+      if (invalidPayments) throw new Error("Revisa los importes y métodos de pago de cada moneda.");
+      const applied = settledPayments.map((p) => paymentValue(p, rate));
       const sum = applied.reduce((acc, p) => acc.plus(p.usd), new decimal(0));
       if (!sum.eq(total)) throw new Error("El importe neto recibido debe coincidir con el total.");
       if (!draft.current) {
@@ -118,7 +123,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
         const occurred_at = new Date(op.wallClock()).toISOString();
         draft.current = {
           payload: { id, occurred_at, grant_id: local.grant.id, rate_id: rate?.id ?? null, customer_id: customer?.id ?? null,
-            stale_confirmed: staleConfirmed, discount: discount.toFixed(2), items: lines.map((p) => ({ product_id: p.id, price_id: p.price_id, quantity: p.quantity })), payments },
+            stale_confirmed: staleConfirmed, discount: discount.toFixed(2), items: lines.map((p) => ({ product_id: p.id, price_id: p.price_id, quantity: p.quantity })), payments: settledPayments },
           receipt: { id, occurred_at, cashier_name: op.profile.username, customer_id: customer?.id ?? null, customer_name: customer?.name ?? null, customer_document: customer?.document ?? null, total: total.toFixed(2),
             sale_items: lines.map((p) => ({ product_id: p.id, name: p.name, quantity: p.quantity, unit_price: p.price })),
             sale_payments: applied, discount: discount.toFixed(2), fiscal_status: "pending", reconciliation: false, local: "pending" },
@@ -243,21 +248,21 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
           const remainder = balance.plus(paymentValues[index]);
           const exact = remainder.gt(0) ? amountInCurrency(remainder.toFixed(2), line.currency, rate) : null;
           let canFill = false;
-          if (exact && !busy && !invalidDiscount && lines.length && methods.some((method) => method.code === line.method)) {
+          if (exact && !busy && !invalidDiscount && lines.length && methodsForCurrency(methods, line.currency).some((method) => method.code === line.method)) {
             try { canFill = remainder.eq(paymentValue({ ...line, amount: exact, change_amount: "0" }, rate).usd); } catch { /* The rounded value is not an exact payment. */ }
           }
           return <div key={index}>
             <div className="payment-row">
-              <Field label="Moneda"><select aria-label="Moneda" value={line.currency} disabled={busy} onChange={(e) => editPayment(index, { currency: e.target.value as Currency, amount: "", change_amount: "0" })}>
+              <Field label="Moneda"><select aria-label="Moneda" value={line.currency} disabled={busy} onChange={(e) => { const currency = e.target.value as Currency; const allowed = methodsForCurrency(methods, currency); editPayment(index, { currency, method: allowed.some((m) => m.code === line.method) ? line.method : allowed[0]?.code ?? "", amount: "", change_amount: "0" }); }}>
                 {currencies.map((c) => <option key={c} value={c}>{c === "VES" ? "Bs. (VES)" : c}</option>)}
               </select></Field>
               <Field label="Método"><select aria-label="Método" value={line.method} disabled={busy} onChange={(e) => editPayment(index, { method: e.target.value, change_amount: "0" })}>
-                {methods.map((m) => <option key={m.code} value={m.code}>{m.label}</option>)}
+                {methodsForCurrency(methods, line.currency).map((m) => <option key={m.code} value={m.code}>{m.label}</option>)}
               </select></Field>
               <Field label="Recibido"><input value={line.amount} disabled={busy} inputMode="decimal"
                 placeholder={currencyScale(line.currency) ? "0,00" : "0"}
                 onChange={(e) => editPayment(index, { amount: e.target.value.replace(",", ".") })} /></Field>
-              {line.method === "cash" && <Field label="Cambio"><input value={line.change_amount} disabled={busy} inputMode="decimal" onChange={(e) => editPayment(index, { change_amount: e.target.value.replace(",", ".") })} /></Field>}
+              <Field label="Cambio estimado"><input value={settledPayments[index].change_amount} readOnly aria-label="Cambio estimado" /></Field>
               {payments.length > 1 && <Button className="icon-button" aria-label="Eliminar pago" variant="ghost" disabled={busy} onClick={() => { draft.current = null; setPayments(payments.filter((_, i) => i !== index)); }}><Trash2 size={16} /></Button>}
             </div>
             {exact && canFill && <Button variant="ghost" onClick={() => editPayment(index, { amount: exact, change_amount: "0" })}>
@@ -266,6 +271,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
           </div>;
         })}
         <Button variant="outline" disabled={busy || payments.length >= 20} onClick={() => { draft.current = null; setPayments([...payments, payment()]); }}><Plus size={16} /> Añadir pago</Button>
+        <p className="muted">El cambio se calcula en la moneda del pago y se descuenta del cobro neto del turno. Entrégalo al cliente antes de finalizar.</p>
         {rate && <p className="muted">1 USD = {rate.ves} VES · {rate.cop} COP. Tasa del {displayDate(rate.created_at)}.</p>}
         {foreign && stale && <Notice>{local?.grant.stale_policy === "block" ? "La tasa venció y bloquea cobros en otras monedas." :
           <label className="checkline"><input type="checkbox" checked={staleConfirmed} onChange={(event) => { draft.current = null; setStaleConfirmed(event.target.checked); }} /> Confirmo el uso de la tasa guardada.</label>}</Notice>}
@@ -278,7 +284,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
             {op.prepared ? "Desbloquear este dispositivo" : "Preparar este dispositivo"}
           </Button>
         </>}
-        <Button className="full" disabled={needsShift || busy || savingCustomer || !local || localExpired || invalidCart || invalidDiscount || !lines.length} onClick={() => void confirm()}>
+        <Button className="full" disabled={needsShift || busy || savingCustomer || !local || localExpired || invalidCart || invalidDiscount || invalidPayments || !balance.isZero() || !lines.length} onClick={() => void confirm()}>
           <Check size={18} /> {busy ? "Guardando…" : "Confirmar venta"}
         </Button>
       </section>

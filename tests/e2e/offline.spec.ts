@@ -147,8 +147,8 @@ test("registra cliente y venta offline, reabre la PWA y sincroniza una sola vez"
   expect(sendCount).toBe(1);
   expect(accepted.size).toBe(1);
   expect([...accepted.values()][0].payments).toEqual([
-    { currency: "VES", method: "mobile", amount: "750", change_amount: "0" },
-    { currency: "USD", method: "cash", amount: "2.00", change_amount: "0" },
+    { currency: "VES", method: "mobile", amount: "750", change_amount: "0.00" },
+    { currency: "USD", method: "cash", amount: "2.00", change_amount: "0.00" },
   ]);
   expect(errors).toEqual([]);
 });
@@ -372,7 +372,7 @@ test("abre dos turnos, bloquea ventas sin turno y descarga cierres con horario c
 
 test("administración descarga un consolidado de seis turnos de tres cajas",async({context,page},testInfo)=>{
   const day=new Date().toLocaleDateString("en-CA",{timeZone:"America/Caracas"});
-  const summary={sales:1,units:2,usd:5,ves:1250,cop:20000,without_rate:0,discounts:0,products:[{product_id:productId,name:"Acetaminofén",units:2,subtotal:5}],payments:[{currency:"USD",method:"cash",net:5}]};
+  const summary={sales:1,units:2,usd:5,ves:1250,cop:20000,without_rate:0,discounts:0,products:[{product_id:productId,name:"Acetaminofén",units:2,subtotal:5}],payments:[{currency:"USD",method:"cash",net:2},{currency:"VES",method:"mobile",net:250},{currency:"COP",method:"cash",net:8000}]};
   const shifts=[1,2,3].flatMap(n=>[0,1].map(i=>({id:crypto.randomUUID(),register_no:n,cashier_name:"caja"+n,business_day:day,started_at:day+(i?"T18:00:00-04:00":"T08:00:00-04:00"),ended_at:day+(i?"T23:00:00-04:00":"T12:00:00-04:00"),summary,closure:{revision:1,closed_at:issuedAt,summary},changed:false})));
   await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
   await context.route("https://supabase-fixture.example.com/**",async r=>{
@@ -386,6 +386,8 @@ test("administración descarga un consolidado de seis turnos de tres cajas",asyn
   await page.goto("/"); await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
   await page.getByRole("button",{name:"Cierres diarios",exact:true}).click();await expect(page.getByText("Turno cerrado",{exact:true})).toHaveCount(6);
   await expect(page.getByRole("button",{name:"Cerrar turno",exact:true})).toHaveCount(0);
+  const totals=page.locator(".currency-totals").first();
+  await expect(totals).toContainText("12,00"); await expect(totals).toContainText("1.500,00"); await expect(totals).toContainText("48.000");
   const downloading=page.waitForEvent("download");await page.getByRole("button",{name:"PDF consolidado de turnos"}).click();const download=await downloading;
   await download.saveAs(testInfo.outputPath("consolidado-seis-turnos.pdf"));
 });
@@ -496,4 +498,30 @@ test('administradora abre y cierra su turno y descarga consolidado con Administr
  await expect(page.getByText('Cierre del turno guardado. Ya puedes descargar su PDF.',{exact:true})).toBeVisible();
  const downloading=page.waitForEvent('download');await page.getByRole('button',{name:'PDF consolidado de turnos',exact:true}).click();const download=await downloading;await download.saveAs(testInfo.outputPath('consolidado-administracion.pdf'));
  await page.screenshot({path:testInfo.outputPath('turno-administracion.png'),fullPage:true});expect(opens).toBe(1);expect(closes).toBe(1);
+});
+
+
+test("calcula el cambio en pesos y restringe métodos por moneda sin editar el vuelto",async({context,page})=>{
+ const methods=[{code:"cash",label:"Efectivo"},{code:"zelle",label:"Zelle"},{code:"mobile",label:"Pago móvil"},{code:"transfer",label:"Transferencia bancaria"},{code:"card",label:"Punto de venta"},{code:"transfer_co",label:"Transferencia colombiana"}];
+ const current={...catalog,payment_rules_enabled:true,rate:{...catalog.rate,cop:3000},methods,settings:{...catalog.settings,stock_tracking:false}};
+ let saved:any;
+ await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
+ await context.route("https://supabase-fixture.example.com/**",async r=>{
+  const path=new URL(r.request().url()).pathname;let result:unknown=[];
+  if(path==="/auth/v1/user")result={user};if(path==="/rest/v1/profiles")result=profile;
+  if(path.endsWith("/rpc/catalog"))result=current;
+  if(path.endsWith("/rpc/authorize_device"))result={id:crypto.randomUUID(),cashier_id:userId,issued_at:issuedAt,expires_at:new Date(Date.now()+86400000).toISOString(),rate_hours:24,stale_policy:"confirm",catalog:current};
+  if(path.endsWith("/rpc/confirm_sale")){saved=r.request().postDataJSON().data;result={id:saved.id,reconciliation:false};}
+  await r.fulfill({json:result});
+ });
+ await page.goto("/");await page.getByLabel("Nombre de usuario").fill("cajero01");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
+ await page.getByRole("button",{name:"Abrir punto de venta"}).click();await page.getByRole("button",{name:"Añadir Acetaminofén"}).click();
+ const currency=page.getByLabel("Moneda",{exact:true});const method=page.getByLabel("Método",{exact:true});
+ await expect(method.locator("option")).toHaveText(["Efectivo","Zelle"]);
+ await currency.selectOption("VES");await expect(method.locator("option")).toHaveText(["Pago móvil","Transferencia bancaria","Punto de venta"]);
+ await currency.selectOption("COP");await expect(method.locator("option")).toHaveText(["Efectivo","Transferencia colombiana"]);
+ await page.getByLabel("Recibido",{exact:true}).fill("20000");await expect(page.getByLabel("Cambio estimado",{exact:true})).toHaveValue("5000");await expect(page.getByLabel("Cambio estimado",{exact:true})).toHaveAttribute("readonly","");
+ await page.getByRole("button",{name:"Preparar este dispositivo",exact:true}).click();await page.getByLabel("Clave del dispositivo",{exact:true}).fill("clave local ficticia");await page.getByLabel("Confirmar clave").fill("clave local ficticia");await page.getByRole("button",{name:"Autorizar dispositivo"}).click();
+ await expect(page.getByRole("button",{name:"Confirmar venta",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Confirmar venta",exact:true}).click();
+ await expect.poll(()=>saved?.payments).toEqual([{currency:"COP",method:"cash",amount:"20000",change_amount:"5000"}]);
 });

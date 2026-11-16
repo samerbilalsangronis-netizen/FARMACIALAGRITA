@@ -15,9 +15,9 @@ export type Settings = {
   rate_hours: number; stale_policy: "confirm" | "block";
 };
 export type Rate = { id: string; ves: number; cop: number; created_at: string };
-export type Method = { code: string; label: string };
+export type Method = { code: string; label: string; currencies?: Currency[] };
 export const registerLabel = (register: number) => register === 4 ? "Administración" : "Caja " + register;
-export type Catalog = { admin_shifts_enabled?: boolean; simple_pricing_enabled?: boolean; pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
+export type Catalog = { payment_rules_enabled?: boolean; admin_shifts_enabled?: boolean; simple_pricing_enabled?: boolean; pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
 export type Grant = { shift_id?: string | null; shift_required?: boolean; id: string; cashier_id: string; issued_at: string; expires_at: string; rate_hours: number; stale_policy: "confirm" | "block"; catalog: Catalog };
 export type Customer = { id: string; name: string; document: string; phone?: string | null; notes?: string | null };
 export type Payment = { currency: Currency; method: string; amount: string; change_amount: string };
@@ -62,7 +62,7 @@ export function paymentValue(payment: Payment, rate: Rate | null) {
   const amount = new decimal(payment.amount);
   const change = new decimal(payment.change_amount);
   const places = currencyScale(payment.currency);
-  if (!amount.gt(change) || amount.decimalPlaces() > places || change.decimalPlaces() > places || (payment.method !== "cash" && !change.isZero())) {
+  if (!amount.gt(change) || amount.decimalPlaces() > places || change.decimalPlaces() > places) {
     throw new Error("Verifica los decimales y el cambio de cada pago.");
   }
   const usd = amount.minus(change).div(exchange).toDecimalPlaces(2);
@@ -109,4 +109,35 @@ export function salePriceFromCost(netCost: string, markup: string): string {
   const price = cost.times(percent.div(100).plus(1)).toDecimalPlaces(2);
   if (price.lte(0) || price.gt("999999999999.99")) throw new Error("El precio calculado está fuera de rango.");
   return price.toFixed(2);
+}
+
+
+const methodCurrencies: Record<string, readonly Currency[]> = {
+  cash: ["USD", "COP"], zelle: ["USD"], mobile: ["VES"], transfer: ["VES"], card: ["VES"], transfer_co: ["COP"],
+};
+export function methodsForCurrency(methods: Method[], currency: Currency) {
+  return methods.filter((m) => (methodCurrencies[m.code] ?? []).includes(currency) && (!m.currencies || m.currencies.includes(currency)));
+}
+
+// Asigna cada pago al saldo restante, respetando los decimales de su moneda.
+export function paymentsWithEstimatedChange(payments: Payment[], totalUsd: string, rate: Rate | null): Payment[] {
+  let remaining = new decimal(totalUsd);
+  return payments.map((payment) => {
+    let change = "0";
+    try {
+      paymentValue({ ...payment, change_amount: "0" }, rate);
+      const due = amountInCurrency(decimal.max(remaining, 0).toFixed(2), payment.currency, rate);
+      if (due !== null) change = decimal.max(new decimal(payment.amount).minus(due), 0).toFixed(currencyScale(payment.currency));
+      const settled = { ...payment, change_amount: change };
+      remaining = remaining.minus(paymentValue(settled, rate).usd);
+      return settled;
+    } catch { return { ...payment, change_amount: change }; }
+  });
+}
+
+export type CollectionSummary = { payments: { currency: Currency; net: number | string }[] };
+export function collectionTotals(summaries: CollectionSummary[]): Record<Currency, string> {
+  const totals = { USD: new decimal(0), VES: new decimal(0), COP: new decimal(0) };
+  for (const summary of summaries) for (const payment of summary.payments) totals[payment.currency] = totals[payment.currency].plus(payment.net);
+  return { USD: totals.USD.toFixed(2), VES: totals.VES.toFixed(2), COP: totals.COP.toFixed(0) };
 }
