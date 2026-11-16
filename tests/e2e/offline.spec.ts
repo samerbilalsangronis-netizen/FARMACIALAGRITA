@@ -281,7 +281,7 @@ test("cada cajera cierra su caja y la administración descarga los tres cierres"
           closeCount++;
           result = 1;
         }
-        if (path.endsWith("/rpc/register_day")) {
+        if (path.endsWith("/rpc/register_day") || path.endsWith("/rpc/register_overview")) {
           const box = { register_no: 1, username: "cajera1", summary, closure: closeCount ? closed : null, changed: false };
           result = role === "cashier" ? [box] : [box, ...[2, 3].map((n) => ({
             ...box, register_no: n, username: "cajera" + n, closure: { ...closed, cashier_name: "cajera" + n },
@@ -295,11 +295,11 @@ test("cada cajera cierra su caja y la administración descarga los tres cierres"
       await page.getByLabel("Contraseña").fill("prueba-ficticia");
       await page.getByRole("button", { name: "Ingresar" }).click();
       if (role === "admin") {
-        await expect(page.getByRole("heading", { name: "Ventas de hoy por caja" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Ventas por turno de caja" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Caja 3", exact: true })).toBeVisible();
       } else {
         await expect(page.getByRole("heading", { name: "Resumen de la farmacia" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Ventas de hoy por caja" })).toHaveCount(0);
+        await expect(page.getByRole("heading", { name: "Ventas por turno de caja" })).toHaveCount(0);
       }
       await page.getByRole("button", { name: "Cierres diarios", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Caja 1", exact: true })).toBeVisible();
@@ -526,7 +526,7 @@ test("calcula el cambio en pesos y restringe métodos por moneda sin editar el v
  await expect.poll(()=>saved?.payments).toEqual([{currency:"COP",method:"cash",amount:"20000",change_amount:"5000"}]);
 });
 
-test("dashboard distingue turno cerrado del acumulado diario y conserva importes legibles",async({context,page},testInfo)=>{
+test("dashboard muestra el turno completo de varios días y conserva importes legibles",async({context,page},testInfo)=>{
  const day=new Date().toLocaleDateString("en-CA",{timeZone:"America/Caracas"});
  const summary={sales:2,units:16,usd:22.31,ves:7001.39,cop:48345,without_rate:0,discounts:0,products:[],payments:[{currency:"VES",method:"mobile",net:7001.39},{currency:"COP",method:"cash",net:48345}]};
  const boxes=[1,2,3,4].map(n=>({register_no:n,username:n===4?"administradora":"caja"+n,summary,closure:null,changed:false}));
@@ -534,14 +534,15 @@ test("dashboard distingue turno cerrado del acumulado diario y conserva importes
  await context.route("https://supabase-fixture.example.com/**",async r=>{
   const path=new URL(r.request().url()).pathname;let result:unknown=[];
   if(path==="/auth/v1/user")result={user};if(path==="/rest/v1/profiles")result={...profile,role:"admin"};if(path.endsWith("/rpc/catalog"))result=catalog;
-  if(path.endsWith("/rpc/register_day"))result=boxes;
+  if(path.endsWith("/rpc/register_day"))result=boxes.map(b=>({...b,summary:{...summary,sales:1,usd:5}}));
+  if(path.endsWith("/rpc/register_overview"))result=boxes.map(b=>({...b,turn:b.register_no<3?{id:"turn-"+b.register_no,cashier_name:b.username,started_at:"2026-11-14T12:29:00Z",ended_at:b.register_no===1?issuedAt:null}:null,summary:b.register_no<3?summary:{...summary,sales:0,units:0,payments:[]}}));
   if(path.endsWith("/rpc/register_shift_day"))result=[{register_no:1,ended_at:issuedAt},{register_no:2,ended_at:null}];
   await r.fulfill({json:result});
  });
  await page.goto("/");await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
  const first=page.locator(".register-grid > section").filter({has:page.getByRole("heading",{name:"Caja 1",exact:true})});
- await expect(first.getByText("Turno cerrado",{exact:true})).toBeVisible();await expect(first.getByText("2 / 16",{exact:true})).toBeVisible();await expect(first).toContainText("Incluye ventas de turnos cerrados");
- await expect(page.getByText("Turno abierto",{exact:true})).toBeVisible();await expect(page.getByText("Sin turno abierto",{exact:true})).toHaveCount(2);
+ await expect(first.getByText("Turno cerrado",{exact:true})).toBeVisible();await expect(first.getByText("2 / 16",{exact:true})).toBeVisible();await expect(first).toContainText("Totales del turno completo");await expect(first).toContainText("14/11/26");
+ await expect(page.getByText("Turno abierto",{exact:true})).toBeVisible();await expect(page.getByText("Sin turnos registrados",{exact:true})).toHaveCount(2);
  for(const width of [1280,1024,390]){
   await page.setViewportSize({width,height:1000});
   const amounts=first.locator(".currency-total strong");await expect(amounts).toHaveText([/0,00/,/7.001,39/,/48.345/]);

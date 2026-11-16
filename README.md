@@ -122,3 +122,7 @@ Aplicar `supabase/migrations/202611160012_cambio_metodos_moneda.sql` antes de pu
 Métodos admitidos: USD efectivo/Zelle; VES transferencia/pago móvil/punto de venta; COP efectivo/transferencia colombiana. Las autorizaciones anteriores conservan su validación original para sincronizar ventas pendientes. Actualizar y sincronizar los dispositivos con conexión para recibir la nueva autorización.
 
 Los cierres individuales, el consolidado PDF y las casillas de la fecha y del turno suman los pagos netos por su moneda original. El total USD de referencia se identifica por separado y no se convierte para presentar cobros en Bs. o COP. No se recalculan ni modifican ventas, precios, productos o cierres históricos.
+
+### Panel por turno completo (migración 013)
+
+Aplicar `202611160013_panel_por_turno.sql` antes de publicar. El panel consulta `register_overview`: muestra el turno abierto o, si no existe, el último turno cerrado de cada caja. Incluye todos los días del turno y muestra inicio/cierre. Un turno nuevo comienza con sus propios totales; los anteriores siguen disponibles en Cierres diarios por su fecha de apertura. Los cierres con sincronización posterior conservan su versión guardada y avisan que debe actualizarse para incorporar los movimientos nuevos.

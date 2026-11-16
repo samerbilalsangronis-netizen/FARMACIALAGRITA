@@ -9,7 +9,7 @@ test('cambio automático en servidor, métodos por moneda, cierres netos y autor
  create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
  grant usage on schema auth to authenticated;insert into auth.users values('${admin}','a@x'),('${cashier}','c@x');`);
  const dir=new URL('../supabase/migrations/',import.meta.url);
- for(const name of (await readdir(dir)).filter(n=>!n.includes('012')).sort())await db.exec(await readFile(new URL(name,dir),'utf8'));
+ for(const name of (await readdir(dir)).filter(n=>!n.includes('012') && !n.includes('013')).sort())await db.exec(await readFile(new URL(name,dir),'utf8'));
  await db.exec(`insert into public.profiles(id,username,role,register_no)values('${admin}','admin','admin',null),('${cashier}','caja1','cashier',1);`);
  const as=async id=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);await db.exec('set role authenticated');};
  const rpc=async(expr,args=[]) => (await db.query('select '+expr+' as r',args)).rows[0].r;
@@ -34,4 +34,11 @@ test('cambio automático en servidor, métodos por moneda, cierres netos y autor
  assert.equal(row.closure.summary.usd,25);assert.equal(row.closure.summary.sales,5);
  const net=currency=>row.closure.summary.payments.filter(p=>p.currency===currency).reduce((n,p)=>n+p.net,0);
  assert.equal(net('USD'),2);assert.equal(net('VES'),1500);assert.equal(net('COP'),24000);
+ await db.exec('reset role');await db.exec(await readFile(new URL('202611160013_panel_por_turno.sql',dir),'utf8'));
+ // Un turno que empezó hace dos días debe aparecer completo después de cerrar.
+ await db.query("update public.register_shifts set started_at=started_at-interval '2 days',business_day=business_day-2 where id=$1",[shift]);
+ await as(admin);let overview=await rpc('public.register_overview()');assert.equal(overview.length,4);assert.equal(overview[0].summary.sales,5);assert.equal(overview[0].summary.usd,25);assert.equal(overview[0].turn.id,shift);assert.ok(overview[0].turn.ended_at);
+ await as(cashier);overview=await rpc('public.register_overview()');assert.deepEqual(overview.map(b=>b.register_no),[1]);assert.equal(overview[0].summary.sales,5);
+ const next=crypto.randomUUID();await rpc('public.open_register_shift($1)',[next]);overview=await rpc('public.register_overview()');assert.equal(overview[0].turn.id,next);assert.equal(overview[0].summary.sales,0);assert.equal(overview[0].turn.ended_at,null);
+
 });
