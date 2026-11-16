@@ -525,3 +525,28 @@ test("calcula el cambio en pesos y restringe métodos por moneda sin editar el v
  await expect(page.getByRole("button",{name:"Confirmar venta",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Confirmar venta",exact:true}).click();
  await expect.poll(()=>saved?.payments).toEqual([{currency:"COP",method:"cash",amount:"20000",change_amount:"5000"}]);
 });
+
+test("dashboard distingue turno cerrado del acumulado diario y conserva importes legibles",async({context,page},testInfo)=>{
+ const day=new Date().toLocaleDateString("en-CA",{timeZone:"America/Caracas"});
+ const summary={sales:2,units:16,usd:22.31,ves:7001.39,cop:48345,without_rate:0,discounts:0,products:[],payments:[{currency:"VES",method:"mobile",net:7001.39},{currency:"COP",method:"cash",net:48345}]};
+ const boxes=[1,2,3,4].map(n=>({register_no:n,username:n===4?"administradora":"caja"+n,summary,closure:null,changed:false}));
+ await context.route("**/api/login",r=>r.fulfill({json:{access_token:jwt,refresh_token:"fixture"}}));
+ await context.route("https://supabase-fixture.example.com/**",async r=>{
+  const path=new URL(r.request().url()).pathname;let result:unknown=[];
+  if(path==="/auth/v1/user")result={user};if(path==="/rest/v1/profiles")result={...profile,role:"admin"};if(path.endsWith("/rpc/catalog"))result=catalog;
+  if(path.endsWith("/rpc/register_day"))result=boxes;
+  if(path.endsWith("/rpc/register_shift_day"))result=[{register_no:1,ended_at:issuedAt},{register_no:2,ended_at:null}];
+  await r.fulfill({json:result});
+ });
+ await page.goto("/");await page.getByLabel("Nombre de usuario").fill("admin");await page.getByLabel("Contraseña").fill("fixture");await page.getByRole("button",{name:"Ingresar",exact:true}).click();
+ const first=page.locator(".register-grid > section").filter({has:page.getByRole("heading",{name:"Caja 1",exact:true})});
+ await expect(first.getByText("Turno cerrado",{exact:true})).toBeVisible();await expect(first.getByText("2 / 16",{exact:true})).toBeVisible();await expect(first).toContainText("Incluye ventas de turnos cerrados");
+ await expect(page.getByText("Turno abierto",{exact:true})).toBeVisible();await expect(page.getByText("Sin turno abierto",{exact:true})).toHaveCount(2);
+ for(const width of [1280,1024,390]){
+  await page.setViewportSize({width,height:1000});
+  const amounts=first.locator(".currency-total strong");await expect(amounts).toHaveText([/0,00/,/7.001,39/,/48.345/]);
+  expect(await amounts.evaluateAll(nodes=>nodes.every(node=>node.scrollWidth<=node.clientWidth && node.getBoundingClientRect().height<30))).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await first.screenshot({path:testInfo.outputPath("dashboard-"+width+".png")});
+ }
+});

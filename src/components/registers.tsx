@@ -23,6 +23,7 @@ export type Summary = {
   payments: { currency: Currency; method: string; net: number }[];
 };
 type Closure = { revision: number; closed_at: string; cashier_name: string; summary: Summary };
+type ShiftState = { register_no: number; ended_at: string | null };
 type Register = { register_no: number; username: string | null; summary: Summary; closure: Closure | null; changed: boolean };
 
 const count = new Intl.NumberFormat("es-VE");
@@ -37,7 +38,7 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
   const admin = op.profile?.role === "admin";
   const [today, setToday] = useState(() => localDay());
   const [date, setDate] = useState(today);
-  const [result, setResult] = useState<{ day: string; boxes: Register[] } | null>(null);
+  const [result, setResult] = useState<{ day: string; boxes: Register[]; shifts: ShiftState[] | null } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,12 +53,15 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
   const load = useCallback(async () => {
     const request = ++requestId.current;
     try {
-      const entries = await rpc<Register[]>("register_day", { report_day: day });
-      if (request === requestId.current) { setResult({ day, boxes: entries }); setError(""); }
+      const [entries, shifts] = await Promise.all([
+        rpc<Register[]>("register_day", { report_day: day }),
+        dashboard ? rpc<ShiftState[]>("register_shift_day", { report_day: day }).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (request === requestId.current) { setResult({ day, boxes: entries, shifts }); setError(""); }
     } catch (error) {
       if (request === requestId.current) setError(accessError(error));
     }
-  }, [day]);
+  }, [day, dashboard]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setToday(localDay()), 30_000);
@@ -164,7 +168,7 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
   }
 
   return <>
-    {dashboard ? <div className="section-title"><div><h2>Ventas de hoy por caja</h2><p>Cobros sincronizados en su moneda original, descontando el cambio.</p></div></div> :
+    {dashboard ? <div className="section-title"><div><h2>Ventas de hoy por caja</h2><p>Acumulado de hoy, incluidos los turnos cerrados. Cobros netos en su moneda original.</p></div></div> :
       <Heading label="OPERACIÓN DE CAJA" title="Cierres diarios">{admin ? "Consulta los cierres de las tres cajas y descarga el consolidado." : "Revisa tus ventas sincronizadas y registra el cierre de tu caja."}</Heading>}
     {!dashboard && <div className="toolbar">
       <Field label="Fecha de operación"><input type="date" value={day} max={today} disabled={busy}
@@ -179,15 +183,19 @@ export function DailyRegisters({ op, dashboard = false, readOnly = false }: { op
     {!boxes?.length && connected && !error && <Empty>{boxes ? "Tu usuario aún no tiene una caja asignada." : "Cargando datos de las cajas…"}</Empty>}
     <div className={dashboard ? "register-grid" : "stack"}>
       {boxes?.map((box) => {
+        const turns = result?.shifts?.filter((turn) => turn.register_no === box.register_no);
+        const open = turns?.some((turn) => !turn.ended_at);
+        const turnStatus = turns == null ? "Estado del turno no disponible" : open ? "Turno abierto" : turns.length ? "Turno cerrado" : "Sin turno abierto";
         const live = box.summary;
         const summary = dashboard ? live : box.closure?.summary ?? live;
         return <section className="card stack" key={box.register_no}>
           <div className="section-title"><div><h3>{registerLabel(box.register_no)}</h3><p>{box.username ?? "Sin cajera asignada"}</p></div>
             <div className="actions">
-              <span className={"pill " + (box.changed ? "warning" : box.closure ? "green" : "")}>{dashboard ? "Ventas del día" : status(box)}</span>
+              <span className={"pill " + (dashboard ? open ? "green" : "" : box.changed ? "warning" : box.closure ? "green" : "")}>{dashboard ? turnStatus : status(box)}</span>
               {!dashboard && box.closure && <Button variant={admin ? "outline" : "default"} disabled={busy}
                 onClick={() => void download(box.register_no)}><Download size={17} /> PDF de la caja</Button>}
             </div></div>
+          {dashboard && <small>Acumulado del día · {day} · Incluye ventas de turnos cerrados.</small>}
           <div className="list-line"><span>Ventas / unidades</span><strong>{count.format(summary.sales)} / {count.format(summary.units)}</strong></div>
           <CollectionTotals summaries={[summary]} /><small>Total de referencia de las ventas: {money(summary.usd)}.</small>
           {summary.without_rate > 0 && <p className="muted">{summary.without_rate} ventas carecen de una tasa registrada.</p>}
