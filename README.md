@@ -126,3 +126,18 @@ Los cierres individuales, el consolidado PDF y las casillas de la fecha y del tu
 ### Panel por turno completo (migración 013)
 
 Aplicar `202611160013_panel_por_turno.sql` antes de publicar. El panel consulta `register_overview`: muestra el turno abierto o, si no existe, el último turno cerrado de cada caja. Incluye todos los días del turno y muestra inicio/cierre. Un turno nuevo comienza con sus propios totales; los anteriores siguen disponibles en Cierres diarios por su fecha de apertura. Los cierres con sincronización posterior conservan su versión guardada y avisan que debe actualizarse para incorporar los movimientos nuevos.
+
+### Mejoras de operación de noviembre (014)
+
+Publicación autorizada por el propietario el 19 de noviembre de 2026. Migración 014 aplicada en Supabase con RLS en las tablas privadas y permisos directos revocados. La huella del inventario antes y después coincidió: 1806 productos, sin cambios.
+
+- La clave local abre la bóveda una vez por sesión. Se eliminó el bloqueo por 15 minutos de inactividad. Cambiar de módulo, registrar varias ventas, sincronizar, renovar autorización e iniciar otro turno conservan la bóveda desbloqueada. El botón **Bloquear sesión** sigue disponible. Cerrar o recargar la aplicación inicia otra sesión y exige desbloquearla; no se guarda la contraseña local en texto ni se cambia el cifrado de IndexedDB.
+- Solo administración ve **Total vendido** y **Cobros de hoy** en el inicio. Se mantienen las funciones operativas y los cierres propios de cada cajera.
+- **Historial de ventas → Anular factura** verifica primero el estado del servidor. La administradora indica un motivo; desde una sesión de cajera se pide autorización administrativa puntual sin sustituir la sesión activa. Debe haber conexión. El comprobante y el motivo quedan en el historial, las anuladas no se reenvían ni se cuentan como ventas, y el PDF identifica la operación anulada. Las operaciones trasladadas al sistema fiscal siguen su procedimiento anterior.
+- Los pendientes con error se comunican a una cola privada en Supabase, identificando el equipo. Administración los ve desde otros equipos; cada cajera solo ve los suyos. La anulación usa el mismo bloqueo por UUID que la confirmación, comprueba si la venta ya se guardó y deja una marca para rechazar envíos tardíos. No existe borrado físico de comprobantes.
+- El servidor impide cerrar un turno o abrir uno nuevo si tiene pendientes conocidos sin resolver. La pantalla identifica los equipos que los comunicaron. Una venta creada en un equipo completamente offline aún no puede ser conocida por los demás: sincronizar todos los equipos antes del cierre. El cierre avisa de esta limitación.
+- La validación de pagos informa la causa concreta (tasa, importe, cambio, decimales o método), sin modificar cobros históricos. La migración conserva la excepción puntual de recuperación si todavía está activa.
+
+Migración aplicada: `supabase/migrations/202611190014_pendientes_anulaciones.sql`. Actualizar/sincronizar los equipos preparados al recibir la nueva versión de la web. La migración agrega tablas privadas y funciones con autorización; no reescribe productos, precios, ventas ni cierres históricos. Los cierres afectados por una anulación posterior se actualizan por su responsable para generar la nueva versión del PDF.
+
+Validación: `npm run typecheck`, `npm test`, `CHROMIUM_PATH=/ruta/chromium npm run test:e2e`. Las pruebas usan PostgreSQL y servicios aislados; no generan ventas reales.

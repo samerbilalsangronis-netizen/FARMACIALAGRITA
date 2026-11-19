@@ -1,7 +1,7 @@
 import Dexie, { type Table } from "dexie";
 import type { Customer, Grant, Profile, QueuedSale } from "./domain";
 
-export type Vault = { profile: Profile; grant: Grant; sales: QueuedSale[]; customers?: Customer[]; pendingCustomers?: Customer[]; customerAliases?: Record<string, string>; clockOffset: number; lastActivity: number; lastSync: string | null };
+export type Vault = { deviceId?: string; deviceLabel?: string; profile: Profile; grant: Grant; sales: QueuedSale[]; customers?: Customer[]; pendingCustomers?: Customer[]; customerAliases?: Record<string, string>; clockOffset: number; lastActivity: number; lastSync: string | null };
 type Envelope = { id: string; salt: Uint8Array<ArrayBuffer>; iv: Uint8Array<ArrayBuffer>; cipher: ArrayBuffer; revision: number };
 export type VaultSession = { key: CryptoKey; row: Envelope; vault: Vault };
 
@@ -56,7 +56,8 @@ export async function enroll(profile: Profile, passphrase: string, grant: Grant)
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await keyFor(passphrase, salt);
   const now = Date.now();
-  const vault = { profile, grant, sales: [], clockOffset: Date.parse(grant.issued_at) - now, lastActivity: now, lastSync: null };
+  const deviceId = crypto.randomUUID();
+  const vault = { deviceId, deviceLabel: "Equipo " + profile.username + " · " + deviceId.slice(0,6), profile, grant, sales: [], clockOffset: Date.parse(grant.issued_at) - now, lastActivity: now, lastSync: null };
   return persist({ key, row: { id, salt, iv: new Uint8Array(), cipher: new ArrayBuffer(0), revision: 0 }, vault }, vault);
 }
 

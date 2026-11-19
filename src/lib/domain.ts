@@ -17,7 +17,7 @@ export type Settings = {
 export type Rate = { id: string; ves: number; cop: number; created_at: string };
 export type Method = { code: string; label: string; currencies?: Currency[] };
 export const registerLabel = (register: number) => register === 4 ? "Administración" : "Caja " + register;
-export type Catalog = { payment_rules_enabled?: boolean; admin_shifts_enabled?: boolean; simple_pricing_enabled?: boolean; pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
+export type Catalog = { sync_controls_enabled?: boolean; payment_rules_enabled?: boolean; admin_shifts_enabled?: boolean; simple_pricing_enabled?: boolean; pricing_enabled?: boolean; products: Product[]; settings: Settings; rate: Rate | null; methods: Method[] };
 export type Grant = { shift_id?: string | null; shift_required?: boolean; id: string; cashier_id: string; issued_at: string; expires_at: string; rate_hours: number; stale_policy: "confirm" | "block"; catalog: Catalog };
 export type Customer = { id: string; name: string; document: string; phone?: string | null; notes?: string | null };
 export type Payment = { currency: Currency; method: string; amount: string; change_amount: string };
@@ -26,7 +26,7 @@ export type SalePayload = {
   stale_confirmed: boolean; discount: string; items: { product_id: string; price_id: string; quantity: number }[]; payments: Payment[];
 };
 export type Receipt = {
-  id: string; occurred_at: string; cashier_name: string; customer_id?: string | null; customer_name: string | null; total: number | string;
+  id: string; occurred_at: string; cashier_name: string; cashier_id?: string; device_label?: string; cancellation_reason?: string; remote_pending?: boolean; customer_id?: string | null; customer_name: string | null; total: number | string;
   customer_document?: string | null;
   discount?: number | string;
   sale_items: { product_id: string; name: string; quantity: number; unit_price: number | string }[];

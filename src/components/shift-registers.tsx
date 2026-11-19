@@ -10,7 +10,7 @@ import { DailyRegisters, type Summary } from "./registers";
 import { Button } from "./ui/button";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
-type Shift = { id: string; cashier_id?: string; register_no: number; cashier_name: string; business_day: string; started_at: string; ended_at: string | null;
+type Shift = { pending_count?: number; pending_devices?: string | null; id: string; cashier_id?: string; register_no: number; cashier_name: string; business_day: string; started_at: string; ended_at: string | null;
   summary: Summary; closure: { revision: number; closed_at: string; summary: Summary } | null; changed: boolean };
 const count = new Intl.NumberFormat("es-VE");
 
@@ -62,7 +62,7 @@ function ShiftRegisters({ op }: { op: Operation }) {
   useEffect(() => { if (!connected) return; void load(); const timer = window.setInterval(() => { setToday(localDay()); void load(); }, 30_000); return () => { sequence.current++; clearInterval(timer); }; }, [connected, load]);
 
   async function change(shift?: string) {
-    if (mutation.current || pending || op.connection !== "online") return;
+    if (mutation.current || pending || op.connection !== "online" || (shift && shifts.find(s=>s.id===shift)?.pending_count)) return;
     mutation.current = true; setBusy(true); setError(""); setNotice("");
     try {
       if (shift) { await rpc("close_register_shift", { shift }); await op.invalidateShift(shift); setNotice("Cierre del turno guardado. Ya puedes descargar su PDF."); }
@@ -115,13 +115,14 @@ function ShiftRegisters({ op }: { op: Operation }) {
       <div className="list-line"><span>Ventas / unidades</span><strong>{count.format(summary.sales)} / {count.format(summary.units)}</strong></div>
       <CollectionTotals summaries={[summary]} />
       <small>Total de referencia de las ventas: {money(summary.usd)}. Los recuadros muestran el cobro real en cada moneda, descontando el cambio.</small>
+      {Boolean(s.pending_count) && <Notice>{s.pending_count} operaciones pendientes comunicadas por {s.pending_devices || "otro equipo"}. Revisa Historial de ventas; deben sincronizarse o anularse antes del cierre.</Notice>}
       {s.changed && <Notice>Se sincronizaron ventas o anulaciones después del cierre. Su responsable puede actualizarlo sin duplicar el turno.</Notice>}
       <div className="actions">
         {s.closure && <Button variant="outline" disabled={busy} onClick={() => void download([s],true)}><Download size={17} /> PDF del turno</Button>}
-        {ownShift(s) && (!s.ended_at || s.changed) && <Button disabled={busy || pending || op.connection !== "online"} onClick={() => setConfirm(s.id)}>{s.ended_at ? "Actualizar cierre" : "Cerrar turno"}</Button>}
+        {ownShift(s) && (!s.ended_at || s.changed) && <Button disabled={busy || pending || Boolean(s.pending_count) || op.connection !== "online"} onClick={() => setConfirm(s.id)}>{s.ended_at ? "Actualizar cierre" : "Cerrar turno"}</Button>}
       </div>
       {s.closure && <small>Versión {s.closure.revision} · {displayDate(s.closure.closed_at)}</small>}
-      {confirm === s.id && <div className="stack"><p>¿Confirmar {s.ended_at ? "la actualización de este cierre" : "el cierre de este turno"}? Incluye {s.summary.sales} ventas sincronizadas. Luego podrás iniciar otro turno.</p><div className="actions"><Button disabled={busy || pending || op.connection !== "online"} onClick={() => void change(s.id)}>Confirmar cierre</Button><Button variant="ghost" disabled={busy} onClick={() => setConfirm(null)}>Cancelar</Button></div></div>}
+      {confirm === s.id && <div className="stack"><p>¿Confirmar {s.ended_at ? "la actualización de este cierre" : "el cierre de este turno"}? Incluye {s.summary.sales} ventas sincronizadas. Luego podrás iniciar otro turno.</p><div className="actions"><Button disabled={busy || pending || Boolean(s.pending_count) || op.connection !== "online"} onClick={() => void change(s.id)}>Confirmar cierre</Button><Button variant="ghost" disabled={busy} onClick={() => setConfirm(null)}>Cancelar</Button></div></div>}
     </section>;
   }
   return <>
@@ -134,6 +135,7 @@ function ShiftRegisters({ op }: { op: Operation }) {
       {data?.day === day && !ownActive.length && <Button disabled={busy || pending || op.connection !== "online"} onClick={() => void change()}>Iniciar turno</Button>}
     </div>
     {data?.day === day && <section className="card stack"><h2>Cobros reales · Fecha de apertura {day}</h2><CollectionTotals summaries={shifts.filter((s) => s.business_day === day).map((s) => s.closure?.summary ?? s.summary)} /><small>Incluye los turnos visibles de esta fecha, abiertos y cerrados. Los importes se suman en su moneda original y descuentan el cambio.</small></section>}
+    {op.catalog?.sync_controls_enabled && <small>El cierre comprueba los pendientes que ya comunicaron los equipos. Si otro equipo está sin internet, sincronízalo antes de cerrar: sus operaciones nuevas aún no pueden conocerse desde aquí.</small>}
     {active.length > 0 && <><h2>Turnos abiertos</h2><div className="register-grid">{active.map(card)}</div></>}
     <h2>Historial de turnos · {day}</h2>
     {history.length ? <div className="register-grid">{history.map(card)}</div> : <Empty>No hay turnos cerrados con esta fecha de apertura.</Empty>}

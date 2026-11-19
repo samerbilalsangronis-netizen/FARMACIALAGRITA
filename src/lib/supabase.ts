@@ -28,3 +28,17 @@ export async function signIn(username: string, password: string) {
   const { error } = await supabase().auth.setSession(body);
   if (error) throw new Error(error.message);
 }
+
+// La autorización administrativa es temporal y no sustituye la sesión de la cajera.
+export async function administratorRpc<T>(name: string, args: Record<string, unknown>, username: string, password: string): Promise<T> {
+  const response = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo autorizar la anulación.");
+  const temporary = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, {
+    auth: { storageKey: "farmacia-admin-approval", persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: "Bearer " + body.access_token } },
+  });
+  const { data, error } = await temporary.rpc(name, args);
+  if (error) throw new Error(error.message);
+  return data as T;
+}

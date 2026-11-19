@@ -7,6 +7,7 @@ import { exportTable, type ExportCell } from "@/lib/export";
 import { rpc } from "@/lib/supabase";
 import { accessError, type Operation } from "@/lib/use-operation";
 import { Button } from "./ui/button";
+import { CancelSale } from "./cancel-sale";
 import { Empty, Field, Heading, Notice } from "./ui/shared";
 
 export const fiscalLabels = { pending: "Pendiente", review: "En revisión", transferred: "Trasladada", void: "Anulada" };
@@ -33,7 +34,7 @@ export function ReceiptView({ receipt, catalog, close }: { receipt: Receipt; cat
       const [{ createReportPdf }, logo] = await Promise.all([import("@/lib/report-pdf"), fetch(pharmacyBrand.logo)]);
       if (!logo.ok) throw new Error("El logo aún no está disponible en este dispositivo. Actualiza la app con internet.");
       const pdf = createReportPdf({
-        title: "Comprobante interno", summaryTitle: "Resumen de la venta", pharmacy,
+        title: receipt.fiscal_status === "void" ? "Comprobante anulado" : "Comprobante interno", summaryTitle: "Resumen de la venta", pharmacy,
         logo: new Uint8Array(await logo.arrayBuffer()), rif: pharmacyBrand.rif,
         address: settings?.address, phone: settings?.phone,
         period: "Operación " + number + "  ·  " + issued, issuedAt: displayDate(new Date().toISOString()),
@@ -49,6 +50,7 @@ export function ReceiptView({ receipt, catalog, close }: { receipt: Receipt; cat
             rows: [["Operación", receipt.id, "Atendido por", receipt.cashier_name],
               ["Cliente", customer, "Documento", receipt.customer_document ?? "-"],
               ["Registro", syncLabel(receipt), "Estado fiscal", fiscal],
+              ...(receipt.cancellation_reason ? [["Anulación", receipt.cancellation_reason, "Estado", "Anulada"]] : []),
               ...(receipt.fiscal_transfers ? [["Ref. fiscal", receipt.fiscal_transfers.invoice, "Fecha fiscal", receipt.fiscal_transfers.fiscal_date]] : [])] },
           { title: "Productos", columns: [{ label: "Producto", width: 76 }, { label: "Cant.", width: 20, align: "right" },
             { label: "Precio unitario", width: 41, align: "right" }, { label: "Importe", width: 41, align: "right" }],
@@ -102,7 +104,7 @@ export function ReceiptView({ receipt, catalog, close }: { receipt: Receipt; cat
             <strong>{money(line.amount, line.currency)}</strong></div>)}
         </div>
         <footer className="receipt-footer">
-          <p>{syncLabel(receipt)} · Fiscal {fiscal.toLowerCase()}</p>
+          <p>{syncLabel(receipt)} · Fiscal {fiscal.toLowerCase()}</p>{receipt.cancellation_reason && <p>Motivo de anulación: {receipt.cancellation_reason}</p>}
           {receipt.fiscal_transfers && <p>Referencia {receipt.fiscal_transfers.invoice} · {receipt.fiscal_transfers.fiscal_date}</p>}
           <small>ID {receipt.id}</small>
         </footer>
@@ -127,6 +129,7 @@ export function Records({ op, fiscal = false, onReceipt }: { op: Operation; fisc
   const [status, setStatus] = useState(fiscal ? "open" : "");
   const [sync, setSync] = useState("");
   const [selected, setSelected] = useState<Receipt | null>(null);
+  const [cancelling, setCancelling] = useState<Receipt | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -159,6 +162,7 @@ export function Records({ op, fiscal = false, onReceipt }: { op: Operation; fisc
     {op.connection === "offline" && <Notice>Se muestran las operaciones guardadas en el dispositivo y las consultadas en esta sesión.</Notice>}
     <LoadHistory op={op} />
     {error && <Notice>{error}</Notice>}{message && <Notice success>{message}</Notice>}
+    {cancelling && <CancelSale op={op} receipt={cancelling} close={() => setCancelling(null)} done={() => { setCancelling(null); setMessage("Factura anulada. Se conserva el comprobante y el motivo en el historial."); }} />}
     {selected && canEdit && <section className="card stack">
       <h2>Revisar venta {selected.id.slice(0, 8)}</h2>
       <p>{displayDate(selected.occurred_at)} · {money(selected.total)}</p>
@@ -167,7 +171,6 @@ export function Records({ op, fiscal = false, onReceipt }: { op: Operation; fisc
         if (busy) return;
         const form = new FormData(event.currentTarget, (event.nativeEvent as SubmitEvent).submitter);
         const action = String(form.get("action"));
-        if (action === "void" && !window.confirm("¿Anular esta venta y devolver las unidades al inventario?")) return;
         setBusy(true); setError("");
         try {
           await rpc("set_fiscal_status", { sale: selected.id, next_status: action, invoice: String(form.get("invoice") ?? ""), fiscal_date: form.get("date") || null, note: String(form.get("note") ?? "") });
@@ -181,7 +184,6 @@ export function Records({ op, fiscal = false, onReceipt }: { op: Operation; fisc
         </div>
         <div className="actions"><Button type="submit" disabled={busy} name="action" value="transferred">Marcar trasladada</Button>
           <Button type="submit" variant="outline" disabled={busy} name="action" value="review">En revisión</Button>
-          <Button type="submit" variant="danger" disabled={busy} name="action" value="void">Anular venta</Button>
           <Button variant="ghost" onClick={() => setSelected(null)}>Cerrar</Button></div>
       </form>
     </section>}
@@ -200,9 +202,10 @@ export function Records({ op, fiscal = false, onReceipt }: { op: Operation; fisc
         <thead><tr><th>Operación</th><th>Cajero</th><th>Total</th><th>Sincronización</th><th>Fiscal</th><th>Acciones</th></tr></thead>
         <tbody>{rows.map((r) => <tr key={r.id}>
           <td><strong>{r.id.slice(0, 8)}</strong><small>{displayDate(r.occurred_at)}</small></td><td>{r.cashier_name}<small>{r.customer_name}</small></td><td>{money(r.total)}</td>
-          <td><span className={r.local ? "pill warning" : "pill green"}>{syncLabel(r)}</span>{r.reconciliation && <small>Requiere conciliar inventario</small>}{r.error && <small>{r.error}</small>}</td>
+          <td><span className={r.local ? "pill warning" : "pill green"}>{syncLabel(r)}</span>{r.reconciliation && <small>Requiere conciliar inventario</small>}{r.error && <small>{r.error}</small>}{r.device_label && <small>{r.device_label}</small>}{r.cancellation_reason && <small>Motivo: {r.cancellation_reason}</small>}</td>
           <td>{fiscalLabels[r.fiscal_status]}<small>{r.fiscal_transfers?.invoice}</small></td>
           <td><div className="actions"><Button variant="ghost" onClick={() => onReceipt(r)}><FileText size={16} /> Ver</Button>
+            {!["void","transferred"].includes(r.fiscal_status) && <Button variant="outline" disabled={op.connection === "offline" || op.needsReconnect || Boolean(r.local && !op.catalog?.sync_controls_enabled)} onClick={() => setCancelling(r)}>Anular factura</Button>}
             {fiscal && canEdit && !r.local && ["pending", "review"].includes(r.fiscal_status) && <Button variant="outline" onClick={() => setSelected(r)}><ClipboardCheck size={16} /> Revisar</Button>}</div></td>
         </tr>)}</tbody></table></div> : <Empty>No hay operaciones para estos filtros.</Empty>}
     </section>

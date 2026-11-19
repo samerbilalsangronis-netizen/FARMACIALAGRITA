@@ -278,6 +278,7 @@ export function Sales({ op, onReceipt, onPrepareDevice, onOpenRegisters }: {
         <div className="total small-total"><span>{balance.lt(0) ? "Cobro por ajustar" : "Pendiente por cobrar"}</span>
           <strong>{convertedBalance === null ? money(balance.abs().toFixed(2)) : displayPayment(convertedBalance, displayCurrency)}</strong>
         </div>
+        {local && localExpired && <><Notice>Renueva la autorización con internet. No necesitas volver a introducir la clave local.</Notice><Button variant="outline" onClick={onPrepareDevice}>Actualizar autorización</Button></>}
         {!local && <>
           <Notice>{op.prepared ? "Desbloquea este dispositivo para confirmar la venta." : "Prepara este dispositivo con internet para confirmar la venta."}</Notice>
           <Button variant="outline" className="full" onClick={onPrepareDevice}>

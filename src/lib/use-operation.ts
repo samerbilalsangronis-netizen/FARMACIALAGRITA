@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Catalog, Customer, Grant, Profile, QueuedSale, Receipt } from "./domain";
 import { adjustedNow, enroll, expired, hasVault, persist, unlock, type Vault, type VaultSession } from "./vault";
-import { rpc, signIn, supabase } from "./supabase";
+import { administratorRpc, rpc, signIn, supabase } from "./supabase";
+
+import { applyPendingResolution, pendingEntries, type PendingResolution } from "./pending-sales";
 
 export type Connection = "online" | "offline" | "syncing" | "error";
 const accessError = (error: unknown) => error instanceof Error ? error.message : "No se pudo completar la operación.";
@@ -15,6 +17,7 @@ export function useOperation() {
   const [connection, setConnection] = useState<Connection>("offline");
   const [remoteCustomers, setRemoteCustomers] = useState<Customer[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [remotePending, setRemotePending] = useState<Receipt[]>([]);
   const [prepared, setPrepared] = useState(false);
   const [workerReady, setWorkerReady] = useState(false);
   const [syncProblem, setSyncProblem] = useState("");
@@ -128,6 +131,26 @@ export function useOperation() {
     return failure;
   }, [serialize]);
 
+  const reportPending = useCallback(async (sameSession: () => boolean) => {
+    const stored = await serialize(async () => {
+      const current = session.current?.vault;
+      if (!current || !sameSession()) return null;
+      if (!current.deviceId) { const deviceId = crypto.randomUUID(); await updateVault({ ...current, deviceId, deviceLabel: "Equipo " + current.profile.username + " · " + deviceId.slice(0,6) }); }
+      return session.current!.vault;
+    });
+    if (!stored) return;
+    const entries = pendingEntries(stored.sales);
+    if (!entries.length) return;
+    const resolutions = await rpc<PendingResolution[]>("report_pending_sales", { device: stored.deviceId, device_label: stored.deviceLabel ?? "Equipo " + stored.profile.username, entries });
+    if (!sameSession() || !resolutions.some(r => r.state !== "pending")) return;
+    await serialize(async () => {
+      const current = session.current?.vault;
+      if (!current || !sameSession()) return;
+      const byId = new Map(resolutions.map(r => [r.id,r]));
+      await updateVault({ ...current, sales: current.sales.map(s => ({ ...s, receipt: byId.has(s.payload.id) ? applyPendingResolution(s.receipt, byId.get(s.payload.id)!) : s.receipt })) });
+    });
+  }, [serialize]);
+
   const sync = useCallback((renew = false): Promise<void> => {
     if (syncInFlight.current) {
       return renew ? syncInFlight.current.then(() => sync(renew)) : syncInFlight.current;
@@ -147,6 +170,10 @@ export function useOperation() {
         if (!sameSession()) return;
         const message = accessError(error);
         const network = /fetch|network|offline|timeout|abort|timed out|conexión|load failed/i.test(message) || !navigator.onLine;
+        if (/JWT.*expired|invalid.*JWT|refresh token.*invalid|refresh token.*expired/i.test(message)) {
+          authenticated.current = false;
+          setConnection("offline"); setSyncProblem("Reconecta tu usuario para sincronizar. El dispositivo sigue desbloqueado."); return;
+        }
         setConnection(network ? "offline" : "error");
         setSyncProblem(network ? "" : message);
         return;
@@ -156,6 +183,7 @@ export function useOperation() {
       setConnection("syncing");
       try {
         let problem = await syncCustomers(user.id, sameSession);
+        if (currentCatalog.sync_controls_enabled) await reportPending(sameSession);
         const stored = session.current?.vault;
         if (stored) {
           const pending = stored.sales.filter(({ receipt }) => receipt.local);
@@ -172,9 +200,14 @@ export function useOperation() {
               if (/fetch|network|offline|timeout|abort|timed out|load failed/i.test(message)) break;
             }
           }
+          if (results.size && sameSession()) await serialize(async () => {
+            const current = session.current?.vault;
+            if (current && sameSession()) await updateVault({ ...current, sales: current.sales.map(s => ({ ...s, receipt: results.get(s.payload.id) ?? s.receipt })) });
+          });
           const failure = [...results.values()].find((receipt) => receipt.local);
           const rateChanged = currentCatalog.rate?.id !== stored.grant.catalog.rate?.id;
-          const modeChanged = currentCatalog.payment_rules_enabled !== stored.grant.catalog.payment_rules_enabled ||
+          const modeChanged = currentCatalog.sync_controls_enabled !== stored.grant.catalog.sync_controls_enabled ||
+            currentCatalog.payment_rules_enabled !== stored.grant.catalog.payment_rules_enabled ||
             JSON.stringify(currentCatalog.methods) !== JSON.stringify(stored.grant.catalog.methods) ||
             currentCatalog.settings.stock_tracking !== stored.grant.catalog.settings.stock_tracking ||
             currentCatalog.pricing_enabled !== stored.grant.catalog.pricing_enabled ||
@@ -206,7 +239,13 @@ export function useOperation() {
         if (!sameSession()) return;
         if (!navigator.onLine) { setConnection("offline"); return; }
         setCatalog(currentCatalog);
-        await Promise.all([refreshHistory(historyLimit.current, sameSession), refreshCustomers(sameSession)]);
+        if (currentCatalog.sync_controls_enabled) {
+          await reportPending(sameSession);
+          if (!session.current?.vault.sales.some(s => s.receipt.local) && !session.current?.vault.pendingCustomers?.length) problem = "";
+        }
+        await Promise.all([refreshHistory(historyLimit.current, sameSession), refreshCustomers(sameSession),
+          currentCatalog.sync_controls_enabled ? rpc<Receipt[]>("pending_sale_records").then(rows => { if (sameSession()) setRemotePending(rows); }) : Promise.resolve(),
+        ]);
         if (!sameSession()) return;
         setSyncProblem(problem);
         setConnection(!navigator.onLine ? "offline" : problem ? "error" : "online");
@@ -219,7 +258,7 @@ export function useOperation() {
     const running = operation.finally(() => { syncInFlight.current = null; });
     syncInFlight.current = running;
     return running;
-  }, [refreshHistory, refreshCustomers, serialize, syncCustomers]);
+  }, [refreshHistory, refreshCustomers, serialize, syncCustomers, reportPending]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
@@ -266,7 +305,9 @@ export function useOperation() {
     setPrepared(ready);
     setConnection("online");
     if (session.current) await sync(true);
-    else await Promise.all([refreshHistory(), refreshCustomers(() => active.current === p && authenticated.current)])
+    else await Promise.all([refreshHistory(), refreshCustomers(() => active.current === p && authenticated.current),
+      snapshot.sync_controls_enabled ? rpc<Receipt[]>("pending_sale_records").then(rows => { if (active.current === p && authenticated.current) setRemotePending(rows); }) : Promise.resolve(),
+    ])
       .catch((error) => setSyncProblem(accessError(error)));
   }
 
@@ -360,7 +401,7 @@ export function useOperation() {
       session.current = null;
       active.current = null;
       authenticated.current = false;
-      setProfile(null); setLocal(null); setCatalog(null); setRemoteCustomers([]); setReceipts([]); setSyncProblem("");
+      setProfile(null); setLocal(null); setCatalog(null); setRemoteCustomers([]); setReceipts([]); setRemotePending([]); setSyncProblem("");
       historyLimit.current = 500; setHistoryTruncated(false); setPrepared(false); setConnection("offline");
       try { await supabase().auth.signOut({ scope: "local" }); } catch { /* Session storage is cleared below. */ }
       for (const key of Object.keys(window.sessionStorage)) {
@@ -369,22 +410,37 @@ export function useOperation() {
     });
   }, [serialize]);
 
-  useEffect(() => {
-    if (!profile) return;
-    let timer: number;
-    const reset = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => void lock(), 15 * 60_000);
-    };
-    reset();
-    window.addEventListener("pointerdown", reset);
-    window.addEventListener("keydown", reset);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("pointerdown", reset);
-      window.removeEventListener("keydown", reset);
-    };
-  }, [profile, lock]);
+  // La clave abre la bóveda una sola vez por sesión. Solo el bloqueo manual la cierra.
+  async function renewDevice() {
+    if (!session.current) throw new Error("Desbloquea el dispositivo una vez para esta sesión.");
+    if (!navigator.onLine || !authenticated.current) throw new Error("Reconecta tu usuario con internet para renovar el acceso; la bóveda permanece desbloqueada.");
+    await sync(true);
+    if (session.current && expired(session.current.vault)) throw new Error("No se pudo renovar la autorización. Revisa la conexión.");
+  }
+
+  async function cancelSale(receipt: Receipt, reason: string, credentials?: { username: string; password: string }) {
+    const user = active.current;
+    if (!user || !authenticated.current || !navigator.onLine) throw new Error("Conéctate para verificar y anular sin duplicar operaciones.");
+    const sameSession = () => active.current === user && authenticated.current;
+    if (syncInFlight.current) await syncInFlight.current;
+    if (session.current?.vault.grant.catalog.sync_controls_enabled || catalog?.sync_controls_enabled) {
+      await reportPending(sameSession);
+      const args = { sale: receipt.id, reason: reason.trim() };
+      const result = user.role === "admin" ? await rpc<PendingResolution>("cancel_sale_operation",args) :
+        credentials ? await administratorRpc<PendingResolution>("cancel_sale_operation",args,credentials.username,credentials.password) : null;
+      if (!result) throw new Error("La administradora debe autorizar la anulación.");
+      if (!sameSession()) return;
+      await serialize(async () => {
+        const stored = session.current?.vault;
+        if (stored && sameSession()) await updateVault({ ...stored, sales: stored.sales.map(s => s.payload.id === receipt.id ? { ...s, receipt: applyPendingResolution(s.receipt,{...result,id:receipt.id}) } : s) });
+      });
+    } else {
+      if (receipt.local) throw new Error("Falta aplicar la actualización de pendientes en Supabase antes de cancelar esta operación.");
+      if (user.role !== "admin") throw new Error("La administradora debe autorizar la anulación.");
+      await rpc("set_fiscal_status",{sale:receipt.id,next_status:"void",note:reason.trim()});
+    }
+    await sync(true);
+  }
 
   async function invalidateShift(shift: string) {
     await serialize(async () => {
@@ -399,12 +455,17 @@ export function useOperation() {
   const customers = [...(local?.customers ?? remoteCustomers), ...(local?.pendingCustomers ?? [])]
     .sort((left, right) => left.name.localeCompare(right.name, "es"));
   const merged = new Map(receipts.map((r) => [r.id, r]));
+  for (const entry of remotePending) {
+    const known = merged.get(entry.id);
+    if (!known) merged.set(entry.id, entry);
+    else if (entry.fiscal_status === "void") merged.set(entry.id, { ...known, fiscal_status: "void", local: undefined, error: undefined, cancellation_reason: entry.cancellation_reason, device_label: entry.device_label });
+  }
   for (const entry of local?.sales ?? []) if (!merged.has(entry.receipt.id)) merged.set(entry.receipt.id, entry.receipt);
   return {
     profile, catalog, local, connection, prepared, workerReady, syncProblem, historyTruncated, needsReconnect: Boolean(profile && !authenticated.current),
     receipts: [...merged.values()].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)),
     customers,
-    registerCustomer, login, prepare, queue, lock, sync, wallClock, loadMoreHistory, invalidateShift,
+    registerCustomer, login, prepare, queue, lock, sync, wallClock, loadMoreHistory, invalidateShift, renewDevice, cancelSale,
   };
 }
 export type Operation = ReturnType<typeof useOperation>;

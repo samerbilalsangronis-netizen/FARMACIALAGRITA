@@ -32,6 +32,7 @@ export function Pharmacy() {
   const [view, setView] = useState<View>("dashboard");
   const [menu, setMenu] = useState(false);
   const [device, setDevice] = useState(false);
+  const [deviceProblem, setDeviceProblem] = useState("");
   const [reconnect, setReconnect] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [installPrompt, setInstallPrompt] = useState<(Event & { prompt(): Promise<void> }) | null>(null);
@@ -52,6 +53,7 @@ export function Pharmacy() {
   const connection = { online: "En línea", offline: "Sin conexión", syncing: "Sincronizando", error: "Revisar sincronización" }[op.connection];
   const change = (next: View) => { setView(next); setMenu(false); };
   function openDeviceSetup() {
+    if (op.local) { setDeviceProblem(""); void op.renewDevice().catch(error => setDeviceProblem(accessError(error))); return; }
     setDevice(true);
     requestAnimationFrame(() => document.getElementById("device-passphrase")?.focus());
   }
@@ -93,6 +95,7 @@ export function Pharmacy() {
           <Button variant="outline" onClick={() => { void installPrompt.prompt(); setInstallPrompt(null); }}><ArrowDownToLine size={17} /> Instalar</Button></div>}
         {pending > 0 && <Notice>{pending} {pending === 1 ? "venta pendiente de sincronizar" : "ventas pendientes de sincronizar"}. Conserva los datos de este navegador hasta completar el envío.</Notice>}
         {op.syncProblem && <Notice>{op.syncProblem}</Notice>}
+        {deviceProblem && <Notice>{deviceProblem}</Notice>}
         <motion.div key={current} className="view" initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
           {current === "dashboard" && <Dashboard op={op} open={change} />}
           {current === "sales" && <Sales op={op} onReceipt={setReceipt} onPrepareDevice={openDeviceSetup} onOpenRegisters={() => change("registers")} />}
@@ -156,7 +159,7 @@ function DeviceSetup({ op }: { op: Operation }) {
   const [busy, setBusy] = useState(false);
   return <section className="card stack">
     <h2>{op.prepared ? "Desbloquear dispositivo" : "Preparar este dispositivo"}</h2>
-    <p className="muted">{op.prepared ? "Escribe la clave local para recuperar el catálogo y las ventas pendientes." :
+    <p className="muted">{op.prepared ? "Escribe la clave local una vez para esta sesión. Se mantiene desbloqueada mientras uses la app; puedes bloquearla manualmente al terminar." :
       "Crea una clave distinta de tu contraseña de usuario. Se usa para cifrar y abrir tus ventas y el catálogo sin conexión."}</p>
     {error && <Notice>{error}</Notice>}
     <form className="form-grid" onSubmit={async (event) => {
@@ -203,7 +206,7 @@ function Dashboard({ op, open }: { op: Operation; open: (page: View) => void }) 
   const admin = op.profile?.role === "admin";
   const tiles = [
     { name: "Ventas de hoy", value: today.rows.length, detail: "Operaciones registradas", icon: ShoppingCart, tone: "green" },
-    { name: "Total vendido", value: money(today.total.toFixed(2)), detail: "USD de referencia hoy", icon: Activity, tone: "green" },
+    ...(admin ? [{ name: "Total vendido", value: money(today.total.toFixed(2)), detail: "USD de referencia hoy", icon: Activity, tone: "green" }] : []),
     stockTracking ? { name: "Bajo inventario", value: low.length, detail: "En el mínimo o por debajo", icon: Package, tone: "amber" } :
       { name: "Productos en catálogo", value: products.length, detail: "Sin control de existencias", icon: Package, tone: "blue" },
     { name: "Por sincronizar", value: all.localCount, detail: "Guardadas en este dispositivo", icon: CloudOff, tone: "blue" },
@@ -220,9 +223,9 @@ function Dashboard({ op, open }: { op: Operation; open: (page: View) => void }) 
     {admin && <Registers op={op} dashboard />}
     {op.historyTruncated && <Notice>El resumen usa el historial cargado. Las ventas más antiguas pueden consultarse desde Historial de ventas.</Notice>}
     <div className="split">
-      <section className="card stack"><div className="section-title"><div><h2>Cobros de hoy</h2><p>Importe neto por moneda</p></div><Activity size={21} /></div>
+      {admin && <section className="card stack"><div className="section-title"><div><h2>Cobros de hoy</h2><p>Importe neto por moneda</p></div><Activity size={21} /></div>
         {today.amounts.map(({ currency, total }) => <div className="list-line" key={currency}><span>{currency}</span><strong>{money(total.toFixed(currency === "COP" ? 0 : 2), currency)}</strong></div>)}
-      </section>
+      </section>}
       <section className="card stack"><div className="section-title"><div><h2>Control de operaciones</h2><p>Ventas disponibles en esta sesión</p></div><ClipboardCheck size={21} /></div>
         <div className="list-line"><span>Pendientes fiscales</span><strong>{all.fiscalCount}</strong></div>
         <div className="list-line"><span>Trasladadas al sistema fiscal</span><strong>{transferred}</strong></div>
